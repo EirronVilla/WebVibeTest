@@ -7,6 +7,68 @@ namespace WebVibeTest.Application.Games;
 
 public sealed class GameService(ApplicationDbContext dbContext) : IGameService
 {
+    public async Task<IReadOnlyList<AvailableGame>> GetAvailablePublicGamesAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        return await dbContext.Games
+            .AsNoTracking()
+            .Where(game => !game.IsPrivate
+                && game.Status == GameStatus.WaitingForPlayers
+                && game.Players.Count < game.MaxPlayers)
+            .OrderByDescending(game => game.CreatedAt)
+            .Select(game => new AvailableGame(
+                game.Id,
+                game.Name,
+                dbContext.Users.Where(user => user.Id == game.HostUserId).Select(user => user.UserName).FirstOrDefault() ?? "Unknown",
+                game.Players.Count,
+                game.MaxPlayers,
+                game.Players.Any(player => player.UserId == userId)))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        var game = await dbContext.Games
+            .AsNoTracking()
+            .Include(game => game.Players)
+            .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new KeyNotFoundException("The game was not found.");
+
+        if (game.Status != GameStatus.WaitingForPlayers)
+        {
+            throw new InvalidOperationException("This game is no longer in the waiting lobby.");
+        }
+
+        if (!game.Players.Any(player => player.UserId == userId))
+        {
+            throw new UnauthorizedAccessException("Only joined players may view this lobby.");
+        }
+
+        var userIds = game.Players.Select(player => player.UserId).Append(game.HostUserId).Distinct().ToList();
+        var userNames = await dbContext.Users
+            .AsNoTracking()
+            .Where(user => userIds.Contains(user.Id))
+            .ToDictionaryAsync(user => user.Id, user => user.UserName ?? user.Email ?? user.Id, cancellationToken);
+
+        return new WaitingLobby(
+            game.Id,
+            game.Name,
+            userNames.GetValueOrDefault(game.HostUserId, "Unknown"),
+            game.MaxPlayers,
+            game.IsPrivate,
+            game.JoinCode,
+            game.HostUserId == userId,
+            game.Players
+                .OrderBy(player => player.TurnOrder)
+                .Select(player => new WaitingLobbyPlayer(
+                    userNames.GetValueOrDefault(player.UserId, "Unknown"),
+                    player.Color,
+                    player.IsHost,
+                    player.UserId == userId))
+                .ToList());
+    }
+
     public async Task<Game> CreateGameAsync(string userId, string name, int maxPlayers, bool isPrivate, CancellationToken cancellationToken = default)
     {
         EnsureAuthenticated(userId);
@@ -166,6 +228,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         };
 
         game.Players.Add(player);
+        dbContext.GamePlayers.Add(player);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return player;
