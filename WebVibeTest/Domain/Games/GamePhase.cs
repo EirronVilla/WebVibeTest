@@ -5,6 +5,9 @@ public enum GamePhase
     InitialPlacementForward,
     InitialPlacementReverse,
     TurnProduction,
+    AwaitingDiscards,
+    AwaitingRobberPlacement,
+    AwaitingRobberyTarget,
     TurnActions,
     Completed
 }

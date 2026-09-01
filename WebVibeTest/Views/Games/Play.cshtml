@@ -1,5 +1,6 @@
 @using System.Globalization
 @using WebVibeTest.Domain.Board
+@using WebVibeTest.Domain.Games
 @using WebVibeTest.Models.Games
 @model WebVibeTest.Application.Games.ActiveGameReadModel
 @functions {
@@ -17,6 +18,101 @@
 
 <h1>@Model.Name</h1>
 <p><strong>Phase:</strong> @Model.Phase &middot; <strong>Current player:</strong> @Model.CurrentPlayerName</p>
+
+<div class="row g-3 mb-3">
+    <div class="col-md-7">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h5">Players</h2>
+            <ul class="list-group list-group-flush">
+                @foreach (var player in Model.Players)
+                {
+                    <li class="player-panel-row player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)">
+                        <span class="d-flex align-items-center gap-2">
+                            <strong>@player.DisplayName</strong>
+                            @if (player.IsCurrentPlayer)
+                            {
+                                <span class="turn-badge">Playing now</span>
+                            }
+                        </span>
+                        <span class="resource-total">@player.TotalResources resource cards</span>
+                    </li>
+                }
+            </ul>
+        </div></div>
+    </div>
+    <div class="col-md-5">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h5">Your resources (@Model.OwnResources.Total)</h2>
+            <div class="resource-hand">
+                @foreach (var resource in Enum.GetValues<ResourceType>())
+                {
+                    <div class="resource-card" title="@resource: @Model.OwnResources.Get(resource)">
+                        <div class="resource-card-art">
+                            <img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" />
+                            <span class="resource-count">@Model.OwnResources.Get(resource)</span>
+                        </div>
+                        <span class="resource-name">@resource</span>
+                    </div>
+                }
+            </div>
+        </div></div>
+    </div>
+</div>
+
+@if (Model.LatestDie1 is int die1 && Model.LatestDie2 is int die2)
+{
+    <div class="d-flex align-items-center gap-2 mb-3" aria-label="Latest dice roll: @die1 and @die2">
+        <strong>Latest roll:</strong>
+        <span class="border rounded bg-light d-inline-flex align-items-center justify-content-center fs-3" style="width:2.5rem;height:2.5rem">@die1</span>
+        <span class="border rounded bg-light d-inline-flex align-items-center justify-content-center fs-3" style="width:2.5rem;height:2.5rem">@die2</span>
+        <span>Total @(die1 + die2)</span>
+    </div>
+}
+
+@if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
+{
+    <button type="button" id="roll-dice" class="btn btn-primary mb-3">Roll two dice</button>
+}
+
+@if (Model.RequiredDiscardCount > 0)
+{
+    <div class="card border-warning mb-3"><div class="card-body">
+        <h2 class="h5">Discard exactly @Model.RequiredDiscardCount cards</h2>
+        <div class="resource-hand" id="discard-inputs">
+            @foreach (var resource in Enum.GetValues<ResourceType>())
+            {
+                <label class="resource-card discard-card">
+                    <img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" />
+                    <span class="resource-name">@resource</span>
+                    <span class="small text-muted">You have @Model.OwnResources.Get(resource)</span>
+                    <input class="form-control form-control-sm" type="number" min="0" max="@Model.OwnResources.Get(resource)" value="0" name="@resource.ToString().ToLowerInvariant()" aria-label="Number of @resource cards to discard" />
+                </label>
+            }
+        </div>
+        <button type="button" id="discard-resources" class="btn btn-warning mt-2">Discard</button>
+    </div></div>
+}
+
+@if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberPlacement)
+{
+    <div class="alert alert-warning">Select a different terrain hex to move the robber.</div>
+}
+
+@if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberyTarget)
+{
+    <div class="card border-danger mb-3"><div class="card-body">
+        <h2 class="h5">Choose a player to rob</h2>
+        @foreach (var target in Model.EligibleRobberyTargets)
+        {
+            <button type="button" class="btn btn-outline-danger robbery-target" data-target-user-id="@target.UserId">@target.DisplayName</button>
+        }
+    </div></div>
+}
+
+@if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnActions)
+{
+    <button type="button" id="end-turn" class="btn btn-primary mb-3">End turn</button>
+}
 
 @if (Model.IsCurrentPlayer && Model.Phase is WebVibeTest.Domain.Games.GamePhase.InitialPlacementForward or WebVibeTest.Domain.Games.GamePhase.InitialPlacementReverse)
 {
@@ -65,10 +161,14 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                        transform="rotate(30 @F(tileCenterX) @F(tileCenterY))" />
             </g>
             <polygon points="@points" fill="none" stroke="#f3e6bd" stroke-width="0.08" />
+            @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberPlacement && hex.Id != board.RobberHexId)
+            {
+                <polygon class="placement-location" data-robber-hex-id="@hex.Id" points="@points" fill="#ffc107" fill-opacity="0.22" stroke="#ffc107" stroke-width="0.08" />
+            }
         }
     </g>
 
-    <g id="number-tokens-and-robber">
+    <g id="number-tokens-and-robber" pointer-events="none">
     @foreach (var hex in board.Hexes)
     {
         var centerX = hex.VertexIds.Average(vertexId => board.Vertices[vertexId].X);
@@ -121,6 +221,119 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     }
 </svg>
 
+<style>
+    .player-panel-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: .55rem;
+        padding: .75rem .9rem;
+        color: #111;
+        border: 2px solid rgba(0, 0, 0, .28);
+        border-radius: .6rem;
+        transition: transform .15s ease, box-shadow .15s ease;
+    }
+
+    .player-panel-row:last-child { margin-bottom: 0; }
+    .player-color-red { background: #e76a6a; }
+    .player-color-blue { background: #65a8e8; }
+    .player-color-white { background: #f4f4f1; }
+    .player-color-orange { background: #f5a44b; }
+    .player-color-green { background: #72be78; }
+    .player-color-brown { background: #ad8065; }
+
+    .player-panel-row.active-turn {
+        position: relative;
+        z-index: 1;
+        border-color: #ffd43b;
+        box-shadow: 0 0 0 .2rem rgba(255, 212, 59, .5), 0 .35rem .8rem rgba(0, 0, 0, .28);
+        transform: translateY(-1px) scale(1.01);
+    }
+
+    .turn-badge {
+        padding: .18rem .5rem;
+        color: #111;
+        background: #ffd43b;
+        border: 1px solid rgba(0, 0, 0, .25);
+        border-radius: 999px;
+        font-size: .75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .03em;
+    }
+
+    .resource-total {
+        padding: .2rem .5rem;
+        background: rgba(255, 255, 255, .7);
+        border-radius: .35rem;
+        white-space: nowrap;
+    }
+
+    .resource-hand {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+        gap: .65rem;
+    }
+
+    .resource-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 0;
+    }
+
+    .resource-card-art {
+        position: relative;
+        width: 100%;
+        max-width: 115px;
+    }
+
+    .resource-card-art img,
+    .resource-card > img {
+        display: block;
+        width: 100%;
+        max-width: 115px;
+        aspect-ratio: 2 / 3;
+        object-fit: cover;
+        border-radius: .45rem;
+        box-shadow: 0 .2rem .5rem rgba(0, 0, 0, .25);
+    }
+
+    .resource-count {
+        position: absolute;
+        top: 80%;
+        left: 50%;
+        color: #3f2a12;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: clamp(1.25rem, 2.4vw, 2rem);
+        font-weight: 800;
+        line-height: 1;
+        text-shadow: 0 1px 0 rgba(255, 255, 255, .65);
+        transform: translate(-50%, -50%);
+    }
+
+    .resource-name {
+        margin-top: .35rem;
+        font-weight: 600;
+    }
+
+    .discard-card {
+        padding: .5rem;
+        cursor: pointer;
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: .5rem;
+    }
+
+    .discard-card input {
+        width: 4.5rem;
+        margin-top: .35rem;
+        text-align: center;
+    }
+</style>
+
 @section Scripts {
     <script src="https://cdn.jsdelivr.net/npm/@@microsoft/signalr@10.0.0/dist/browser/signalr.min.js"></script>
     <script>
@@ -129,11 +342,12 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const token = document.querySelector('#anti-forgery input').value;
             const errorBox = document.getElementById('placement-error');
             let submitting = false;
+            let refreshing = false;
 
-            const place = async (url, valueName, value) => {
+            const postCommand = async (url, values = {}) => {
                 if (submitting) return;
                 submitting = true;
-                const body = new URLSearchParams({ id: gameId, [valueName]: value, __RequestVerificationToken: token });
+                const body = new URLSearchParams({ id: gameId, ...values, __RequestVerificationToken: token });
                 const response = await fetch(url, { method: 'POST', body });
                 if (!response.ok) {
                     errorBox.textContent = await response.text();
@@ -143,13 +357,26 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             };
 
             document.querySelectorAll('[data-vertex-id]').forEach(element =>
-                element.addEventListener('click', () => place('@Url.Action("PlaceSettlement", "Games")', 'vertexId', element.dataset.vertexId)));
+                element.addEventListener('click', () => postCommand('@Url.Action("PlaceSettlement", "Games")', { vertexId: element.dataset.vertexId })));
             document.querySelectorAll('[data-edge-id]').forEach(element =>
-                element.addEventListener('click', () => place('@Url.Action("PlaceRoad", "Games")', 'edgeId', element.dataset.edgeId)));
+                element.addEventListener('click', () => postCommand('@Url.Action("PlaceRoad", "Games")', { edgeId: element.dataset.edgeId })));
+            document.querySelectorAll('[data-robber-hex-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("MoveRobber", "Games")', { hexId: element.dataset.robberHexId })));
+            document.querySelectorAll('[data-target-user-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("RobPlayer", "Games")', { targetUserId: element.dataset.targetUserId })));
+            document.getElementById('roll-dice')?.addEventListener('click', () => postCommand('@Url.Action("RollDice", "Games")'));
+            document.getElementById('end-turn')?.addEventListener('click', () => postCommand('@Url.Action("EndTurn", "Games")'));
+            document.getElementById('discard-resources')?.addEventListener('click', () => {
+                const values = {};
+                document.querySelectorAll('#discard-inputs input').forEach(input => values[input.name] = input.value);
+                postCommand('@Url.Action("Discard", "Games")', values);
+            });
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
             connection.on('GameStateUpdated', updatedGameId => {
-                if (updatedGameId.toLowerCase() === gameId.toLowerCase()) window.location.reload();
+                if (updatedGameId.toLowerCase() !== gameId.toLowerCase() || refreshing) return;
+                refreshing = true;
+                connection.stop().finally(() => window.location.reload());
             });
             connection.onreconnected(() => connection.invoke('JoinLobby', gameId));
             const connect = async () => {

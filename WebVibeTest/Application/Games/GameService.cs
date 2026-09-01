@@ -275,18 +275,37 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             }
         }
 
-        var currentPlayerName = await dbContext.Users
-            .Where(identity => identity.Id == game.CurrentPlayerUserId)
-            .Select(identity => identity.UserName ?? identity.Email ?? identity.Id)
-            .SingleAsync(cancellationToken);
+        var playerUserIds = game.Players.Select(player => player.UserId).ToList();
+        var userNames = await dbContext.Users
+            .Where(identity => playerUserIds.Contains(identity.Id))
+            .ToDictionaryAsync(identity => identity.Id, identity => identity.UserName ?? identity.Email ?? identity.Id, cancellationToken);
+        var ownPlayer = game.Players.Single(player => player.UserId == userId);
+        var eligibleTargets = game.Phase == GamePhase.AwaitingRobberyTarget && isCurrentPlayer
+            ? GetEligibleRobberyTargets(game, board)
+                .Select(player => new RobberyTarget(player.UserId, userNames.GetValueOrDefault(player.UserId, "Unknown")))
+                .ToList()
+            : [];
 
         return new ActiveGameReadModel(
             game.Id,
             game.Name,
             game.Phase!.Value,
-            currentPlayerName,
+            userNames.GetValueOrDefault(game.CurrentPlayerUserId!, "Unknown"),
             isCurrentPlayer,
             game.PendingSettlementVertexId is null,
+            game.LatestDie1,
+            game.LatestDie2,
+            Inventory(ownPlayer),
+            ownPlayer.RequiredDiscardCount,
+            game.Players.OrderBy(player => player.TurnOrder)
+                .Select(player => new PublicPlayerState(
+                    player.UserId,
+                    userNames.GetValueOrDefault(player.UserId, "Unknown"),
+                    player.Color,
+                    player.TotalResources,
+                    player.UserId == game.CurrentPlayerUserId))
+                .ToList(),
+            eligibleTargets,
             board,
             validSettlements,
             validRoads);
@@ -361,10 +380,222 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task<DiceRollResult> RollDiceAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnProduction, "Dice may only be rolled once at the start of the active player's turn.");
+
+        var die1 = RandomNumberGenerator.GetInt32(1, 7);
+        var die2 = RandomNumberGenerator.GetInt32(1, 7);
+        var total = die1 + die2;
+        game.LatestDie1 = die1;
+        game.LatestDie2 = die2;
+        var production = new List<ProductionSummary>();
+
+        if (total == 7)
+        {
+            foreach (var player in game.Players)
+            {
+                player.RequiredDiscardCount = player.TotalResources > 7 ? player.TotalResources / 2 : 0;
+            }
+
+            game.Phase = game.Players.Any(player => player.RequiredDiscardCount > 0)
+                ? GamePhase.AwaitingDiscards
+                : GamePhase.AwaitingRobberPlacement;
+        }
+        else
+        {
+            var produced = ProduceResources(game, DeserializeBoard(game.BoardStateJson!), total);
+            production.AddRange(produced.Select(item => new ProductionSummary(item.Key, item.Value)));
+            game.Phase = GamePhase.TurnActions;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new DiceRollResult(die1, die2, production, game.Phase == GamePhase.AwaitingDiscards);
+    }
+
+    public async Task DiscardResourcesAsync(string userId, Guid gameId, ResourceDiscard discard, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        if (discard.Brick < 0 || discard.Lumber < 0 || discard.Wool < 0 || discard.Grain < 0 || discard.Ore < 0)
+        {
+            throw new ArgumentException("Discard quantities cannot be negative.", nameof(discard));
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        if (game.Phase != GamePhase.AwaitingDiscards)
+        {
+            throw new InvalidOperationException("The game is not awaiting discards.");
+        }
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        if (player.RequiredDiscardCount <= 0)
+        {
+            throw new InvalidOperationException("This player is not required to discard.");
+        }
+
+        if (discard.Total != player.RequiredDiscardCount)
+        {
+            throw new InvalidOperationException($"Exactly {player.RequiredDiscardCount} cards must be discarded.");
+        }
+
+        player.RemoveResource(ResourceType.Brick, discard.Brick);
+        player.RemoveResource(ResourceType.Lumber, discard.Lumber);
+        player.RemoveResource(ResourceType.Wool, discard.Wool);
+        player.RemoveResource(ResourceType.Grain, discard.Grain);
+        player.RemoveResource(ResourceType.Ore, discard.Ore);
+        player.RequiredDiscardCount = 0;
+        if (game.Players.All(candidate => candidate.RequiredDiscardCount == 0))
+        {
+            game.Phase = GamePhase.AwaitingRobberPlacement;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<RobberMoveResult> MoveRobberAsync(string userId, Guid gameId, int hexId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.AwaitingRobberPlacement, "The robber cannot be moved now.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        if (board.Hexes.All(hex => hex.Id != hexId))
+        {
+            throw new ArgumentException("The selected terrain hex does not exist.", nameof(hexId));
+        }
+
+        if (board.RobberHexId == hexId)
+        {
+            throw new InvalidOperationException("The robber must move to a different terrain hex.");
+        }
+
+        board.RobberHexId = hexId;
+        var requiresTarget = GetEligibleRobberyTargets(game, board).Count > 0;
+        game.Phase = requiresTarget ? GamePhase.AwaitingRobberyTarget : GamePhase.TurnActions;
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new RobberMoveResult(hexId, requiresTarget);
+    }
+
+    public async Task<RobberyResult> RobPlayerAsync(string userId, Guid gameId, string targetUserId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.AwaitingRobberyTarget, "A robbery target cannot be selected now.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var target = GetEligibleRobberyTargets(game, board).SingleOrDefault(player => player.UserId == targetUserId)
+            ?? throw new InvalidOperationException("That player is not an eligible robbery target.");
+
+        var stolenResource = SelectRandomResource(target);
+        target.RemoveResource(stolenResource, 1);
+        game.Players.Single(player => player.UserId == userId).AddResource(stolenResource, 1);
+        game.Phase = GamePhase.TurnActions;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new RobberyResult(target.UserId);
+    }
+
+    public async Task<TurnChangeResult> EndTurnAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "The turn cannot end before production and robber resolution are complete.");
+        var players = game.Players.OrderBy(player => player.TurnOrder).ToList();
+        var currentIndex = players.FindIndex(player => player.UserId == userId);
+        var nextPlayer = players[(currentIndex + 1) % players.Count];
+        game.CurrentPlayerUserId = nextPlayer.UserId;
+        game.Phase = GamePhase.TurnProduction;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TurnChangeResult(nextPlayer.UserId);
+    }
+
     private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken) =>
         await dbContext.Games.Include(game => game.Players)
             .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("The game was not found.");
+
+    private static Dictionary<string, int> ProduceResources(Game game, BoardState board, int diceTotal)
+    {
+        var players = game.Players.ToDictionary(player => player.UserId);
+        var produced = new Dictionary<string, int>();
+        foreach (var hex in board.Hexes.Where(hex => hex.NumberToken == diceTotal && hex.Id != board.RobberHexId))
+        {
+            var resource = ResourceForTerrain(hex.Terrain);
+            if (resource is null) continue;
+
+            foreach (var settlement in hex.VertexIds
+                .Select(vertexId => board.Vertices[vertexId].Settlement)
+                .Where(settlement => settlement is not null))
+            {
+                var amount = settlement!.ProductionAmount;
+                players[settlement.UserId].AddResource(resource.Value, amount);
+                produced[settlement.UserId] = produced.GetValueOrDefault(settlement.UserId) + amount;
+            }
+        }
+
+        return produced;
+    }
+
+    private static ResourceType? ResourceForTerrain(TerrainType terrain) => terrain switch
+    {
+        TerrainType.Hills => ResourceType.Brick,
+        TerrainType.Forest => ResourceType.Lumber,
+        TerrainType.Pasture => ResourceType.Wool,
+        TerrainType.Fields => ResourceType.Grain,
+        TerrainType.Mountains => ResourceType.Ore,
+        TerrainType.Desert => null,
+        _ => null
+    };
+
+    private static List<GamePlayer> GetEligibleRobberyTargets(Game game, BoardState board)
+    {
+        var adjacentUserIds = board.Hexes.Single(hex => hex.Id == board.RobberHexId).VertexIds
+            .Select(vertexId => board.Vertices[vertexId].Settlement?.UserId)
+            .Where(userId => userId is not null && userId != game.CurrentPlayerUserId)
+            .ToHashSet();
+        return game.Players
+            .Where(player => adjacentUserIds.Contains(player.UserId) && player.TotalResources > 0)
+            .ToList();
+    }
+
+    private static ResourceType SelectRandomResource(GamePlayer player)
+    {
+        var cardIndex = RandomNumberGenerator.GetInt32(player.TotalResources);
+        foreach (var resource in Enum.GetValues<ResourceType>())
+        {
+            var count = player.GetResource(resource);
+            if (cardIndex < count) return resource;
+            cardIndex -= count;
+        }
+
+        throw new InvalidOperationException("The selected player has no resource cards.");
+    }
+
+    private static ResourceInventory Inventory(GamePlayer player) =>
+        new(player.Brick, player.Lumber, player.Wool, player.Grain, player.Ore);
+
+    private static void EnsureCurrentPlayerAndPhase(Game game, string userId, GamePhase phase, string error)
+    {
+        if (game.CurrentPlayerUserId != userId || game.Phase != phase)
+        {
+            throw new InvalidOperationException(error);
+        }
+    }
 
     private static void EnsureActiveGame(Game game, string userId)
     {

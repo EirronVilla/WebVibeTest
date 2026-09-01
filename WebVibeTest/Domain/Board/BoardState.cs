@@ -51,6 +51,8 @@ public sealed class SettlementState
 {
     public required string UserId { get; init; }
     public PlayerColor Color { get; init; }
+    public BuildingType BuildingType { get; set; }
+    public int ProductionAmount => BuildingType == BuildingType.City ? 2 : 1;
 }
 
 public sealed class RoadState

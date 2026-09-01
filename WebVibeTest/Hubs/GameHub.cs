@@ -9,6 +9,11 @@ public sealed class GameHub : Hub
     public const string LobbyUpdatedEvent = "LobbyUpdated";
     public const string GameStartedEvent = "GameStarted";
     public const string GameStateUpdatedEvent = "GameStateUpdated";
+    public const string DiceRolledEvent = "DiceRolled";
+    public const string ResourceProductionEvent = "ResourceProduction";
+    public const string ResourceCountsChangedEvent = "ResourceCountsChanged";
+    public const string RobberMovedEvent = "RobberMoved";
+    public const string TurnChangedEvent = "TurnChanged";
 
     public Task JoinLobby(Guid gameId) =>
         Groups.AddToGroupAsync(Context.ConnectionId, GroupName(gameId));

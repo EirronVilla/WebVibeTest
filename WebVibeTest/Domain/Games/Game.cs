@@ -17,5 +17,7 @@ public sealed class Game
     public GamePhase? Phase { get; set; }
     public string? CurrentPlayerUserId { get; set; }
     public int? PendingSettlementVertexId { get; set; }
+    public int? LatestDie1 { get; set; }
+    public int? LatestDie2 { get; set; }
     public ICollection<GamePlayer> Players { get; set; } = new List<GamePlayer>();
 }

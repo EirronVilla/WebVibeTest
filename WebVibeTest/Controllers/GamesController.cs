@@ -190,6 +190,12 @@ public sealed class GamesController(
             TempData["Error"] = exception.Message;
             return RedirectToAction(nameof(Index));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The browser can abandon this read when a SignalR update replaces the page.
+            // Request cancellation is expected and should not surface as an application error.
+            return new EmptyResult();
+        }
     }
 
     [HttpPost]
@@ -227,6 +233,106 @@ public sealed class GamesController(
             return Forbid();
         }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RollDice(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.RollDiceAsync(CurrentUserId, id, cancellationToken);
+            var clients = hubContext.Clients.Group(GameHub.GroupName(id));
+            await clients.SendAsync(GameHub.DiceRolledEvent, new { gameId = id, result.Die1, result.Die2 }, cancellationToken);
+            if (result.Production.Count > 0)
+            {
+                await clients.SendAsync(GameHub.ResourceProductionEvent, new { gameId = id, result.Production }, cancellationToken);
+            }
+            await clients.SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Discard(
+        Guid id, int brick, int lumber, int wool, int grain, int ore, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.DiscardResourcesAsync(
+                CurrentUserId,
+                id,
+                new ResourceDiscard(brick, lumber, wool, grain, ore),
+                cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id))
+                .SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> MoveRobber(Guid id, int hexId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.MoveRobberAsync(CurrentUserId, id, hexId, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id))
+                .SendAsync(GameHub.RobberMovedEvent, new { gameId = id, result.HexId }, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RobPlayer(Guid id, string targetUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.RobPlayerAsync(CurrentUserId, id, targetUserId, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id))
+                .SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> EndTurn(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.EndTurnAsync(CurrentUserId, id, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id))
+                .SendAsync(GameHub.TurnChangedEvent, new { gameId = id, result.CurrentPlayerUserId }, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (InvalidOperationException exception)
         {
             return BadRequest(exception.Message);
         }
