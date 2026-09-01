@@ -20,7 +20,8 @@ public sealed record ActiveGameReadModel(
     IReadOnlySet<int> AvailableConstructionVertexIds,
     IReadOnlySet<int> ValidSettlementVertexIds,
     IReadOnlySet<int> ValidRoadEdgeIds,
-    ConstructionReadModel Construction);
+    ConstructionReadModel Construction,
+    TradingReadModel Trading);
 
 public sealed record ConstructionReadModel(
     int RoadsRemaining,
@@ -66,5 +67,28 @@ public sealed record ProductionSummary(string UserId, int CardsProduced);
 public sealed record DiceRollResult(int Die1, int Die2, IReadOnlyList<ProductionSummary> Production, bool RequiresDiscards);
 public sealed record RobberMoveResult(int HexId, bool RequiresTarget);
 public sealed record RobberyResult(string TargetUserId);
-public sealed record TurnChangeResult(string CurrentPlayerUserId);
+public sealed record TurnChangeResult(string CurrentPlayerUserId, IReadOnlyList<Guid> CancelledTradeOfferIds);
 public sealed record BuildResult(string BuildingType, int LocationId, string UserId);
+
+public sealed record ResourceBundle(int Brick, int Lumber, int Wool, int Grain, int Ore)
+{
+    public int Total => Brick + Lumber + Wool + Grain + Ore;
+    public bool HasNegative => Brick < 0 || Lumber < 0 || Wool < 0 || Grain < 0 || Ore < 0;
+}
+
+public sealed record TradingReadModel(
+    IReadOnlyList<TradeOfferReadModel> Offers,
+    IReadOnlyDictionary<ResourceType, int> MaritimeRates);
+
+public sealed record TradeOfferReadModel(
+    Guid Id,
+    string ProposerName,
+    bool IsProposer,
+    ResourceBundle Offered,
+    ResourceBundle Requested,
+    TradeResponseStatus? OwnResponse,
+    IReadOnlyList<TradeResponseReadModel> Responses);
+
+public sealed record TradeResponseReadModel(string UserId, string DisplayName, TradeResponseStatus Status);
+public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds);
+public sealed record MaritimeTradeResult(ResourceType Given, int Rate, ResourceType Received);

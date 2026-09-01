@@ -298,6 +298,29 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             canConstruct && ownRoadCount < 15 ? GetValidRoadBuildEdges(board, userId) : new HashSet<int>(),
             canConstruct && ownSettlementCount < 5 ? GetValidSettlementBuildVertices(board, userId) : new HashSet<int>(),
             canConstruct && ownCityCount < 4 ? GetValidCityBuildVertices(board, userId) : new HashSet<int>());
+        var openOffers = await dbContext.TradeOffers
+            .AsNoTracking()
+            .Include(offer => offer.Responses)
+            .Where(offer => offer.GameId == gameId && offer.Status == TradeStatus.Open
+                && (offer.ProposerUserId == userId || offer.Responses.Any(response => response.UserId == userId)))
+            .OrderBy(offer => offer.CreatedAt)
+            .ToListAsync(cancellationToken);
+        var trading = new TradingReadModel(
+            openOffers.Select(offer => new TradeOfferReadModel(
+                offer.Id,
+                userNames.GetValueOrDefault(offer.ProposerUserId, "Unknown"),
+                offer.ProposerUserId == userId,
+                OfferedBundle(offer),
+                RequestedBundle(offer),
+                offer.Responses.SingleOrDefault(response => response.UserId == userId)?.Status,
+                offer.ProposerUserId == userId
+                    ? offer.Responses.Select(response => new TradeResponseReadModel(
+                        response.UserId,
+                        userNames.GetValueOrDefault(response.UserId, "Unknown"),
+                        response.Status)).ToList()
+                    : []))
+                .ToList(),
+            GetMaritimeRates(board, userId));
         var eligibleTargets = game.Phase == GamePhase.AwaitingRobberyTarget && isCurrentPlayer
             ? GetEligibleRobberyTargets(game, board)
                 .Select(player => new RobberyTarget(player.UserId, userNames.GetValueOrDefault(player.UserId, "Unknown")))
@@ -329,7 +352,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             availableConstructionVertices,
             validSettlements,
             validRoads,
-            construction);
+            construction,
+            trading);
     }
 
     public async Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
@@ -539,11 +563,15 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var players = game.Players.OrderBy(player => player.TurnOrder).ToList();
         var currentIndex = players.FindIndex(player => player.UserId == userId);
         var nextPlayer = players[(currentIndex + 1) % players.Count];
+        var openOffers = await dbContext.TradeOffers
+            .Where(offer => offer.GameId == gameId && offer.Status == TradeStatus.Open)
+            .ToListAsync(cancellationToken);
+        foreach (var offer in openOffers) offer.Status = TradeStatus.Cancelled;
         game.CurrentPlayerUserId = nextPlayer.UserId;
         game.Phase = GamePhase.TurnProduction;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new TurnChangeResult(nextPlayer.UserId);
+        return new TurnChangeResult(nextPlayer.UserId, openOffers.Select(offer => offer.Id).ToList());
     }
 
     public async Task<BuildResult> BuildRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default)
@@ -632,10 +660,218 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         return new BuildResult("City", vertexId, userId);
     }
 
+    public Task<bool> CanAccessGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return Task.FromResult(false);
+        return dbContext.GamePlayers.AsNoTracking()
+            .AnyAsync(player => player.GameId == gameId && player.UserId == userId, cancellationToken);
+    }
+
+    public async Task<TradeEventResult> ProposeTradeAsync(
+        string userId, Guid gameId, ResourceBundle offered, ResourceBundle requested, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        ValidateTradeBundles(offered, requested);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Trades may only be proposed by the active player during turn actions.");
+        var proposer = game.Players.Single(player => player.UserId == userId);
+        EnsureBundleOwned(proposer, offered);
+        var opponents = game.Players.Where(player => player.UserId != userId).ToList();
+        if (opponents.Count == 0) throw new InvalidOperationException("There are no eligible trade partners.");
+
+        var offer = CreateTradeOffer(gameId, userId, offered, requested);
+        foreach (var opponent in opponents)
+        {
+            offer.Responses.Add(new TradeResponse
+            {
+                Id = Guid.NewGuid(),
+                UserId = opponent.UserId,
+                Status = TradeResponseStatus.Pending
+            });
+        }
+
+        dbContext.TradeOffers.Add(offer);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+    }
+
+    public async Task<TradeEventResult> RespondToTradeAsync(
+        string userId, Guid gameId, Guid offerId, bool accept, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        if (game.Phase != GamePhase.TurnActions || game.CurrentPlayerUserId is null)
+            throw new InvalidOperationException("Trades cannot be answered outside the active player's action phase.");
+        var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
+        if (offer.ProposerUserId == userId) throw new InvalidOperationException("A player cannot respond to their own trade.");
+        if (offer.ProposerUserId != game.CurrentPlayerUserId)
+            throw new InvalidOperationException("The trade was not proposed by the active player.");
+        var response = offer.Responses.SingleOrDefault(candidate => candidate.UserId == userId)
+            ?? throw new UnauthorizedAccessException("This player is not a participant in the trade.");
+        if (accept) EnsureBundleOwned(game.Players.Single(player => player.UserId == userId), RequestedBundle(offer));
+        response.Status = accept ? TradeResponseStatus.Accepted : TradeResponseStatus.Rejected;
+        response.RespondedAt = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+    }
+
+    public async Task<TradeEventResult> FinalizeTradeAsync(
+        string userId, Guid gameId, Guid offerId, string acceptingUserId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        if (userId == acceptingUserId) throw new InvalidOperationException("A player cannot trade with themselves.");
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Only the active player may finalize a trade during turn actions.");
+        var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
+        if (offer.ProposerUserId != userId) throw new UnauthorizedAccessException("Only the proposer may finalize this trade.");
+        var acceptedResponse = offer.Responses.SingleOrDefault(response => response.UserId == acceptingUserId
+            && response.Status == TradeResponseStatus.Accepted)
+            ?? throw new InvalidOperationException("That player has not accepted this trade.");
+        var proposer = game.Players.Single(player => player.UserId == userId);
+        var acceptingPlayer = game.Players.Single(player => player.UserId == acceptingUserId);
+        var offered = OfferedBundle(offer);
+        var requested = RequestedBundle(offer);
+        EnsureBundleOwned(proposer, offered);
+        EnsureBundleOwned(acceptingPlayer, requested);
+        TransferBundle(proposer, acceptingPlayer, offered);
+        TransferBundle(acceptingPlayer, proposer, requested);
+        offer.Status = TradeStatus.Completed;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+    }
+
+    public async Task<TradeEventResult> CancelTradeAsync(
+        string userId, Guid gameId, Guid offerId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Only the active player may cancel a trade during turn actions.");
+        var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
+        if (offer.ProposerUserId != userId) throw new UnauthorizedAccessException("Only the proposer may cancel this trade.");
+        offer.Status = TradeStatus.Cancelled;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+    }
+
+    public async Task<MaritimeTradeResult> MaritimeTradeAsync(
+        string userId, Guid gameId, ResourceType give, ResourceType receive, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        if (!Enum.IsDefined(give) || !Enum.IsDefined(receive)) throw new ArgumentException("The selected resource type is invalid.");
+        if (give == receive) throw new InvalidOperationException("The bank resource received must differ from the resource given.");
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Maritime trades are only allowed during the active player's turn actions.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var rate = GetMaritimeRates(board, userId)[give];
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        if (player.GetResource(give) < rate) throw new InvalidOperationException($"This trade requires {rate} {give} cards.");
+        player.RemoveResource(give, rate);
+        player.AddResource(receive, 1);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new MaritimeTradeResult(give, rate, receive);
+    }
+
     private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken) =>
         await dbContext.Games.Include(game => game.Players)
             .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("The game was not found.");
+
+    private async Task<TradeOffer> LoadOpenTradeOfferAsync(Guid gameId, Guid offerId, CancellationToken cancellationToken) =>
+        await dbContext.TradeOffers.Include(offer => offer.Responses)
+            .SingleOrDefaultAsync(offer => offer.Id == offerId && offer.GameId == gameId && offer.Status == TradeStatus.Open, cancellationToken)
+            ?? throw new InvalidOperationException("The trade offer is no longer open.");
+
+    private static TradeOffer CreateTradeOffer(Guid gameId, string userId, ResourceBundle offered, ResourceBundle requested) =>
+        new()
+        {
+            Id = Guid.NewGuid(), GameId = gameId, ProposerUserId = userId, Status = TradeStatus.Open, CreatedAt = DateTime.UtcNow,
+            OfferedBrick = offered.Brick, OfferedLumber = offered.Lumber, OfferedWool = offered.Wool, OfferedGrain = offered.Grain, OfferedOre = offered.Ore,
+            RequestedBrick = requested.Brick, RequestedLumber = requested.Lumber, RequestedWool = requested.Wool, RequestedGrain = requested.Grain, RequestedOre = requested.Ore
+        };
+
+    private static ResourceBundle OfferedBundle(TradeOffer offer) =>
+        new(offer.OfferedBrick, offer.OfferedLumber, offer.OfferedWool, offer.OfferedGrain, offer.OfferedOre);
+
+    private static ResourceBundle RequestedBundle(TradeOffer offer) =>
+        new(offer.RequestedBrick, offer.RequestedLumber, offer.RequestedWool, offer.RequestedGrain, offer.RequestedOre);
+
+    private static void ValidateTradeBundles(ResourceBundle offered, ResourceBundle requested)
+    {
+        if (offered.HasNegative || requested.HasNegative) throw new ArgumentException("Trade quantities cannot be negative.");
+        if (offered.Total <= 0 || requested.Total <= 0) throw new InvalidOperationException("A trade must both offer and request at least one resource.");
+    }
+
+    private static void EnsureBundleOwned(GamePlayer player, ResourceBundle bundle)
+    {
+        if (player.Brick < bundle.Brick || player.Lumber < bundle.Lumber || player.Wool < bundle.Wool
+            || player.Grain < bundle.Grain || player.Ore < bundle.Ore)
+            throw new InvalidOperationException("A trade participant no longer owns the required resources.");
+    }
+
+    private static void TransferBundle(GamePlayer from, GamePlayer to, ResourceBundle bundle)
+    {
+        foreach (var (resource, amount) in BundleValues(bundle).Where(item => item.Amount > 0))
+        {
+            from.RemoveResource(resource, amount);
+            to.AddResource(resource, amount);
+        }
+    }
+
+    private static IEnumerable<(ResourceType Resource, int Amount)> BundleValues(ResourceBundle bundle)
+    {
+        yield return (ResourceType.Brick, bundle.Brick);
+        yield return (ResourceType.Lumber, bundle.Lumber);
+        yield return (ResourceType.Wool, bundle.Wool);
+        yield return (ResourceType.Grain, bundle.Grain);
+        yield return (ResourceType.Ore, bundle.Ore);
+    }
+
+    private static IReadOnlyDictionary<ResourceType, int> GetMaritimeRates(BoardState board, string userId)
+    {
+        var rates = Enum.GetValues<ResourceType>().ToDictionary(resource => resource, _ => 4);
+        foreach (var port in board.Ports)
+        {
+            var vertexIds = port.VertexIds.Length > 0
+                ? port.VertexIds
+                : [board.Edges[port.EdgeId].VertexAId, board.Edges[port.EdgeId].VertexBId];
+            if (!vertexIds.Any(vertexId => board.Vertices[vertexId].Settlement?.UserId == userId)) continue;
+            if (port.Type == PortType.Generic)
+            {
+                foreach (var resource in rates.Keys.ToList()) rates[resource] = Math.Min(rates[resource], 3);
+            }
+            else if (ResourceForPort(port.Type) is ResourceType resource)
+            {
+                rates[resource] = 2;
+            }
+        }
+
+        return rates;
+    }
+
+    private static ResourceType? ResourceForPort(PortType port) => port switch
+    {
+        PortType.Brick => ResourceType.Brick,
+        PortType.Lumber => ResourceType.Lumber,
+        PortType.Wool => ResourceType.Wool,
+        PortType.Grain => ResourceType.Grain,
+        PortType.Ore => ResourceType.Ore,
+        _ => null
+    };
 
     private static HashSet<int> GetValidRoadBuildEdges(BoardState board, string userId) =>
         board.Edges

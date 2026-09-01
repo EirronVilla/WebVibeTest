@@ -18,6 +18,12 @@ public interface IGameService
     Task<BuildResult> BuildRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default);
     Task<BuildResult> BuildSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default);
     Task<BuildResult> BuildCityAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default);
+    Task<bool> CanAccessGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
+    Task<TradeEventResult> ProposeTradeAsync(string userId, Guid gameId, ResourceBundle offered, ResourceBundle requested, CancellationToken cancellationToken = default);
+    Task<TradeEventResult> RespondToTradeAsync(string userId, Guid gameId, Guid offerId, bool accept, CancellationToken cancellationToken = default);
+    Task<TradeEventResult> FinalizeTradeAsync(string userId, Guid gameId, Guid offerId, string acceptingUserId, CancellationToken cancellationToken = default);
+    Task<TradeEventResult> CancelTradeAsync(string userId, Guid gameId, Guid offerId, CancellationToken cancellationToken = default);
+    Task<MaritimeTradeResult> MaritimeTradeAsync(string userId, Guid gameId, ResourceType give, ResourceType receive, CancellationToken cancellationToken = default);
     Task<Game> CreateGameAsync(string userId, string name, int maxPlayers, bool isPrivate, CancellationToken cancellationToken = default);
     Task<GamePlayer> JoinPublicGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task<GamePlayer> JoinPrivateGameAsync(string userId, string joinCode, CancellationToken cancellationToken = default);

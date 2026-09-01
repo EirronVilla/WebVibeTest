@@ -45,6 +45,7 @@ public sealed class BoardPort
     public int Id { get; init; }
     public int EdgeId { get; init; }
     public PortType Type { get; init; }
+    public int[] VertexIds { get; init; } = [];
 }
 
 public sealed class SettlementState

@@ -9,6 +9,8 @@ namespace WebVibeTest.Infrastructure.Data
     {
         public DbSet<Game> Games => Set<Game>();
         public DbSet<GamePlayer> GamePlayers => Set<GamePlayer>();
+        public DbSet<TradeOffer> TradeOffers => Set<TradeOffer>();
+        public DbSet<TradeResponse> TradeResponses => Set<TradeResponse>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {

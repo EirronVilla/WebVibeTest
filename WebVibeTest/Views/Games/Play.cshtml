@@ -5,6 +5,16 @@
 @model WebVibeTest.Application.Games.ActiveGameReadModel
 @functions {
     private static string F(double value) => value.ToString("0.######", CultureInfo.InvariantCulture);
+    private static string BundleText(WebVibeTest.Application.Games.ResourceBundle bundle)
+    {
+        var parts = new List<string>();
+        if (bundle.Brick > 0) parts.Add($"{bundle.Brick} Brick");
+        if (bundle.Lumber > 0) parts.Add($"{bundle.Lumber} Lumber");
+        if (bundle.Wool > 0) parts.Add($"{bundle.Wool} Wool");
+        if (bundle.Grain > 0) parts.Add($"{bundle.Grain} Grain");
+        if (bundle.Ore > 0) parts.Add($"{bundle.Ore} Ore");
+        return string.Join(", ", parts);
+    }
 }
 @{
     ViewData["Title"] = Model.Name;
@@ -143,7 +153,84 @@
             Pieces remaining: @Model.Construction.RoadsRemaining roads, @Model.Construction.SettlementsRemaining settlements, @Model.Construction.CitiesRemaining cities.
         </div>
     </div></div>
+
+    <div class="card border-success mb-3"><div class="card-body">
+        <h2 class="h5">Player trade</h2>
+        <div class="row g-3" id="trade-proposal">
+            <div class="col-md-6">
+                <strong>Offer</strong>
+                <div class="row g-1">
+                    @foreach (var resource in Enum.GetValues<ResourceType>())
+                    {
+                        <div class="col"><label class="small">@resource</label><input type="number" min="0" value="0" class="form-control form-control-sm" name="offered@resource" /></div>
+                    }
+                </div>
+            </div>
+            <div class="col-md-6">
+                <strong>Request</strong>
+                <div class="row g-1">
+                    @foreach (var resource in Enum.GetValues<ResourceType>())
+                    {
+                        <div class="col"><label class="small">@resource</label><input type="number" min="0" value="0" class="form-control form-control-sm" name="requested@resource" /></div>
+                    }
+                </div>
+            </div>
+        </div>
+        <button type="button" id="propose-trade" class="btn btn-success mt-2">Propose to all players</button>
+    </div></div>
+
+    <div class="card border-info mb-3"><div class="card-body">
+        <h2 class="h5">Maritime trade</h2>
+        <div class="d-flex flex-wrap gap-2 align-items-end">
+            <div><label class="form-label">Give</label><select id="maritime-give" class="form-select">
+                @foreach (var resource in Enum.GetValues<ResourceType>())
+                {
+                    <option value="@resource">@resource (@Model.Trading.MaritimeRates[resource]:1)</option>
+                }
+            </select></div>
+            <div><label class="form-label">Receive</label><select id="maritime-receive" class="form-select">
+                @foreach (var resource in Enum.GetValues<ResourceType>()) { <option value="@resource">@resource</option> }
+            </select></div>
+            <button type="button" id="maritime-trade" class="btn btn-info">Trade with bank</button>
+        </div>
+    </div></div>
     <button type="button" id="end-turn" class="btn btn-primary mb-3">End turn</button>
+}
+
+@if (Model.Trading.Offers.Count > 0)
+{
+    <div class="card mb-3"><div class="card-body">
+        <h2 class="h5">Open trade offers</h2>
+        @foreach (var offer in Model.Trading.Offers)
+        {
+            <div class="border rounded p-2 mb-2">
+                <strong>@offer.ProposerName offers:</strong> @BundleText(offer.Offered)<br />
+                <strong>For:</strong> @BundleText(offer.Requested)
+                @if (offer.IsProposer)
+                {
+                    <div class="mt-2">
+                        @foreach (var response in offer.Responses)
+                        {
+                            <span class="me-2">@response.DisplayName: @response.Status</span>
+                            @if (response.Status == TradeResponseStatus.Accepted)
+                            {
+                                <button type="button" class="btn btn-sm btn-success finalize-trade" data-offer-id="@offer.Id" data-accepting-user-id="@response.UserId">Finalize</button>
+                            }
+                        }
+                        <button type="button" class="btn btn-sm btn-outline-danger cancel-trade" data-offer-id="@offer.Id">Cancel</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="mt-2">
+                        <span class="me-2">Your response: @offer.OwnResponse</span>
+                        <button type="button" class="btn btn-sm btn-success respond-trade" data-offer-id="@offer.Id" data-accept="true">Accept</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger respond-trade" data-offer-id="@offer.Id" data-accept="false">Reject</button>
+                    </div>
+                }
+            </div>
+        }
+    </div></div>
 }
 
 @if (Model.IsCurrentPlayer && Model.Phase is WebVibeTest.Domain.Games.GamePhase.InitialPlacementForward or WebVibeTest.Domain.Games.GamePhase.InitialPlacementReverse)
@@ -465,6 +552,22 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 document.querySelectorAll('#discard-inputs input').forEach(input => values[input.name] = input.value);
                 postCommand('@Url.Action("Discard", "Games")', values);
             });
+            document.getElementById('propose-trade')?.addEventListener('click', () => {
+                const values = {};
+                document.querySelectorAll('#trade-proposal input').forEach(input => values[input.name] = input.value);
+                postCommand('@Url.Action("ProposeTrade", "Games")', values);
+            });
+            document.querySelectorAll('.respond-trade').forEach(button => button.addEventListener('click', () =>
+                postCommand('@Url.Action("RespondToTrade", "Games")', { offerId: button.dataset.offerId, accept: button.dataset.accept })));
+            document.querySelectorAll('.finalize-trade').forEach(button => button.addEventListener('click', () =>
+                postCommand('@Url.Action("FinalizeTrade", "Games")', { offerId: button.dataset.offerId, acceptingUserId: button.dataset.acceptingUserId })));
+            document.querySelectorAll('.cancel-trade').forEach(button => button.addEventListener('click', () =>
+                postCommand('@Url.Action("CancelTrade", "Games")', { offerId: button.dataset.offerId })));
+            document.getElementById('maritime-trade')?.addEventListener('click', () =>
+                postCommand('@Url.Action("MaritimeTrade", "Games")', {
+                    give: document.getElementById('maritime-give').value,
+                    receive: document.getElementById('maritime-receive').value
+                }));
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
             connection.on('GameStateUpdated', updatedGameId => {

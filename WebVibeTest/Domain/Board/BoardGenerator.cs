@@ -105,7 +105,12 @@ public static class BoardGenerator
         {
             Id = index,
             EdgeId = coastalEdgeIds[index * coastalEdgeIds.Count / portTypes.Length],
-            Type = type
+            Type = type,
+            VertexIds =
+            [
+                edges[coastalEdgeIds[index * coastalEdgeIds.Count / portTypes.Length]].VertexAId,
+                edges[coastalEdgeIds[index * coastalEdgeIds.Count / portTypes.Length]].VertexBId
+            ]
         }).ToList();
 
         return new BoardState
