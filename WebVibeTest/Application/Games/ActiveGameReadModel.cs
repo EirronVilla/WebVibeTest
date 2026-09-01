@@ -17,6 +17,7 @@ public sealed record ActiveGameReadModel(
     IReadOnlyList<PublicPlayerState> Players,
     IReadOnlyList<RobberyTarget> EligibleRobberyTargets,
     BoardState Board,
+    IReadOnlySet<int> AvailableConstructionVertexIds,
     IReadOnlySet<int> ValidSettlementVertexIds,
     IReadOnlySet<int> ValidRoadEdgeIds);
 

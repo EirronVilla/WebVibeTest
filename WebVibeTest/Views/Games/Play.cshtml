@@ -180,7 +180,15 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         }
         @if (hex.Id == board.RobberHexId)
         {
-            <circle cx="@F(centerX)" cy="@F(centerY)" r="0.16" fill="#222" />
+            var robberWidth = 0.72;
+            var robberHeight = 0.72;
+            <image href="@Url.Content(BoardPieceAssetMap.RobberPath)"
+                   x="@F(centerX - robberWidth / 2)"
+                   y="@F(centerY - robberHeight * 0.72)"
+                   width="@F(robberWidth)"
+                   height="@F(robberHeight)"
+                   preserveAspectRatio="xMidYMid meet"
+                   pointer-events="none" />
         }
     }
     </g>
@@ -212,11 +220,40 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     {
         @if (vertex.Settlement is not null)
         {
+            var buildingAsset = BoardPieceAssetMap.GetBuildingPath(vertex.Settlement.Color, vertex.Settlement.BuildingType);
             <circle cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.17" fill="@vertex.Settlement.Color.ToString().ToLowerInvariant()" stroke="#222" stroke-width="0.04" />
+            @if (buildingAsset is not null)
+            {
+                var buildingSize = vertex.Settlement.BuildingType == BuildingType.City ? 0.9 : 0.72;
+                <image href="@Url.Content(buildingAsset)"
+                       x="@F(vertex.X - buildingSize / 2)"
+                       y="@F(vertex.Y - buildingSize * 0.82)"
+                       width="@F(buildingSize)"
+                       height="@F(buildingSize)"
+                       preserveAspectRatio="xMidYMid meet"
+                       pointer-events="none" />
+            }
         }
-        else if (Model.ValidSettlementVertexIds.Contains(vertex.Id))
+        else if (Model.AvailableConstructionVertexIds.Contains(vertex.Id))
         {
-            <circle class="placement-location" data-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.15" fill="#00a6ff" stroke="white" stroke-width="0.04" opacity="0.8" />
+            @if (Model.ValidSettlementVertexIds.Contains(vertex.Id))
+            {
+                <circle class="placement-location available-vertex" data-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.13" fill="none" stroke="#111" stroke-width="0.045" />
+            }
+            else
+            {
+                <circle class="available-vertex" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.13" fill="none" stroke="#111" stroke-width="0.045" pointer-events="none" />
+            }
+        }
+        else
+        {
+            var markerRadius = 0.13;
+            var crossOffset = 0.075;
+            <g class="blocked-vertex" pointer-events="none">
+                <circle cx="@F(vertex.X)" cy="@F(vertex.Y)" r="@F(markerRadius)" fill="none" stroke="#6c1b1b" stroke-width="0.045" />
+                <line x1="@F(vertex.X - crossOffset)" y1="@F(vertex.Y - crossOffset)" x2="@F(vertex.X + crossOffset)" y2="@F(vertex.Y + crossOffset)" stroke="#6c1b1b" stroke-width="0.04" stroke-linecap="round" />
+                <line x1="@F(vertex.X - crossOffset)" y1="@F(vertex.Y + crossOffset)" x2="@F(vertex.X + crossOffset)" y2="@F(vertex.Y - crossOffset)" stroke="#6c1b1b" stroke-width="0.04" stroke-linecap="round" />
+            </g>
         }
     }
 </svg>
@@ -239,9 +276,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     .player-color-red { background: #e76a6a; }
     .player-color-blue { background: #65a8e8; }
     .player-color-white { background: #f4f4f1; }
-    .player-color-orange { background: #f5a44b; }
+    .player-color-yellow { background: #f2d65c; }
     .player-color-green { background: #72be78; }
-    .player-color-brown { background: #ad8065; }
+    .player-color-black { color: white; background: #343a40; }
+    .player-color-black .resource-total { color: #111; }
 
     .player-panel-row.active-turn {
         position: relative;

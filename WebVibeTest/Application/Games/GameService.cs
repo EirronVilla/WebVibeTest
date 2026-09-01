@@ -256,6 +256,11 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         EnsureActiveGame(game, userId);
         var board = DeserializeBoard(game.BoardStateJson!);
         var isCurrentPlayer = game.CurrentPlayerUserId == userId;
+        var availableConstructionVertices = board.Vertices
+            .Where(vertex => vertex.Settlement is null
+                && vertex.AdjacentVertexIds.All(adjacentId => board.Vertices[adjacentId].Settlement is null))
+            .Select(vertex => vertex.Id)
+            .ToHashSet();
         var validSettlements = new HashSet<int>();
         var validRoads = new HashSet<int>();
 
@@ -263,10 +268,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         {
             if (game.PendingSettlementVertexId is null)
             {
-                validSettlements.UnionWith(board.Vertices
-                    .Where(vertex => vertex.Settlement is null
-                        && vertex.AdjacentVertexIds.All(adjacentId => board.Vertices[adjacentId].Settlement is null))
-                    .Select(vertex => vertex.Id));
+                validSettlements.UnionWith(availableConstructionVertices);
             }
             else
             {
@@ -307,6 +309,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 .ToList(),
             eligibleTargets,
             board,
+            availableConstructionVertices,
             validSettlements,
             validRoads);
     }

@@ -2,10 +2,10 @@ namespace WebVibeTest.Domain.Games;
 
 public enum PlayerColor
 {
-    Red,
-    Blue,
-    White,
-    Orange,
-    Green,
-    Brown
+    Red = 0,
+    Blue = 1,
+    White = 2,
+    Yellow = 3,
+    Green = 4,
+    Black = 5
 }
