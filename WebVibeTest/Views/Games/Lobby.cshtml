@@ -15,6 +15,11 @@
     }
 </div>
 
+@if (TempData["Error"] is string error)
+{
+    <div class="alert alert-danger" role="alert">@error</div>
+}
+
 @if (Model.IsPrivate && Model.IsCurrentUserHost)
 {
     <div class="alert alert-info">
@@ -43,7 +48,22 @@
     }
 </ul>
 
-<p class="text-muted">Waiting for players. Starting the game is not available yet.</p>
+<p class="text-muted">Waiting for the host to start the game.</p>
+
+@if (Model.IsCurrentUserHost)
+{
+    <form asp-action="Start" asp-route-id="@Model.Id" method="post" class="mb-3">
+        @if (Model.CanStart)
+        {
+            <button type="submit" class="btn btn-success">Start game</button>
+        }
+        else
+        {
+            <button type="button" class="btn btn-success" disabled>Start game</button>
+            <span class="text-muted ms-2">At least 3 players are required.</span>
+        }
+    </form>
+}
 
 <form asp-action="Leave" asp-route-id="@Model.Id" method="post">
     <button type="submit" class="btn btn-outline-danger">Leave lobby</button>
@@ -62,6 +82,12 @@
             connection.on("LobbyUpdated", updatedGameId => {
                 if (updatedGameId.toLowerCase() === gameId.toLowerCase()) {
                     window.location.reload();
+                }
+            });
+
+            connection.on("GameStarted", startedGameId => {
+                if (startedGameId.toLowerCase() === gameId.toLowerCase()) {
+                    window.location.href = `/Games/Play/${gameId}`;
                 }
             });
 

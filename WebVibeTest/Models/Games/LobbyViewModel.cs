@@ -11,6 +11,7 @@ public sealed class LobbyViewModel
     public bool IsPrivate { get; init; }
     public string? JoinCode { get; init; }
     public bool IsCurrentUserHost { get; init; }
+    public bool CanStart { get; init; }
     public IReadOnlyList<LobbyPlayerViewModel> Players { get; init; } = [];
 }
 

@@ -18,6 +18,7 @@ public sealed record WaitingLobby(
     bool IsPrivate,
     string? JoinCode,
     bool IsCurrentUserHost,
+    bool CanStart,
     IReadOnlyList<WaitingLobbyPlayer> Players);
 
 public sealed record WaitingLobbyPlayer(

@@ -1,5 +1,9 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using WebVibeTest.Domain.Board;
 using WebVibeTest.Domain.Games;
 using WebVibeTest.Infrastructure.Data;
 
@@ -59,6 +63,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             game.IsPrivate,
             game.JoinCode,
             game.HostUserId == userId,
+            game.HostUserId == userId && game.Players.Count >= 3 && game.Players.Count <= game.MaxPlayers,
             game.Players
                 .OrderBy(player => player.TurnOrder)
                 .Select(player => new WaitingLobbyPlayer(
@@ -183,6 +188,247 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    public async Task StartGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await dbContext.Games
+            .Include(game => game.Players)
+            .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new InvalidOperationException("The game was not found.");
+
+        if (game.HostUserId != userId)
+        {
+            throw new UnauthorizedAccessException("Only the host may start the game.");
+        }
+
+        if (game.Status != GameStatus.WaitingForPlayers)
+        {
+            throw new InvalidOperationException("Only a waiting game may be started.");
+        }
+
+        if (game.Players.Count < 3 || game.Players.Count > game.MaxPlayers)
+        {
+            throw new InvalidOperationException($"The game requires between 3 and {game.MaxPlayers} players to start.");
+        }
+
+        var seed = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+        var orderedPlayers = game.Players
+            .OrderBy(player => TurnOrderKey(seed, player.UserId), StringComparer.Ordinal)
+            .ToList();
+
+        // Move through unique temporary values so PostgreSQL's immediate unique index
+        // cannot reject a permutation of existing turn orders.
+        for (var index = 0; index < orderedPlayers.Count; index++)
+        {
+            orderedPlayers[index].TurnOrder = -(index + 1);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        for (var index = 0; index < orderedPlayers.Count; index++)
+        {
+            orderedPlayers[index].TurnOrder = index + 1;
+        }
+
+        game.BoardSeed = seed;
+        game.BoardStateJson = SerializeBoard(BoardGenerator.Generate(seed, game.Players.Count));
+        game.Status = GameStatus.InProgress;
+        game.Phase = GamePhase.InitialPlacementForward;
+        game.CurrentPlayerUserId = orderedPlayers[0].UserId;
+        game.PendingSettlementVertexId = null;
+        game.StartedAt = DateTime.UtcNow;
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<ActiveGameReadModel> GetActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        var game = await dbContext.Games
+            .AsNoTracking()
+            .Include(game => game.Players)
+            .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new KeyNotFoundException("The game was not found.");
+
+        EnsureActiveGame(game, userId);
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var isCurrentPlayer = game.CurrentPlayerUserId == userId;
+        var validSettlements = new HashSet<int>();
+        var validRoads = new HashSet<int>();
+
+        if (isCurrentPlayer && IsInitialPlacement(game.Phase))
+        {
+            if (game.PendingSettlementVertexId is null)
+            {
+                validSettlements.UnionWith(board.Vertices
+                    .Where(vertex => vertex.Settlement is null
+                        && vertex.AdjacentVertexIds.All(adjacentId => board.Vertices[adjacentId].Settlement is null))
+                    .Select(vertex => vertex.Id));
+            }
+            else
+            {
+                validRoads.UnionWith(board.Vertices[game.PendingSettlementVertexId.Value].EdgeIds
+                    .Where(edgeId => board.Edges[edgeId].Road is null));
+            }
+        }
+
+        var currentPlayerName = await dbContext.Users
+            .Where(identity => identity.Id == game.CurrentPlayerUserId)
+            .Select(identity => identity.UserName ?? identity.Email ?? identity.Id)
+            .SingleAsync(cancellationToken);
+
+        return new ActiveGameReadModel(
+            game.Id,
+            game.Name,
+            game.Phase!.Value,
+            currentPlayerName,
+            isCurrentPlayer,
+            game.PendingSettlementVertexId is null,
+            board,
+            validSettlements,
+            validRoads);
+    }
+
+    public async Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentInitialPlayer(game, userId);
+
+        if (game.PendingSettlementVertexId is not null)
+        {
+            throw new InvalidOperationException("Place the road connected to your new settlement before placing another settlement.");
+        }
+
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var vertex = board.Vertices.SingleOrDefault(candidate => candidate.Id == vertexId)
+            ?? throw new ArgumentException("The selected intersection does not exist.", nameof(vertexId));
+        if (vertex.Settlement is not null)
+        {
+            throw new InvalidOperationException("That intersection already contains a building.");
+        }
+
+        if (vertex.AdjacentVertexIds.Any(adjacentId => board.Vertices[adjacentId].Settlement is not null))
+        {
+            throw new InvalidOperationException("Settlements must be at least two edges apart.");
+        }
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        vertex.Settlement = new SettlementState { UserId = userId, Color = player.Color };
+        game.PendingSettlementVertexId = vertex.Id;
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task PlaceInitialRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentInitialPlayer(game, userId);
+
+        if (game.PendingSettlementVertexId is null)
+        {
+            throw new InvalidOperationException("Place a settlement before placing its road.");
+        }
+
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var edge = board.Edges.SingleOrDefault(candidate => candidate.Id == edgeId)
+            ?? throw new ArgumentException("The selected edge does not exist.", nameof(edgeId));
+        if (edge.Road is not null)
+        {
+            throw new InvalidOperationException("That edge already contains a road.");
+        }
+
+        if (edge.VertexAId != game.PendingSettlementVertexId && edge.VertexBId != game.PendingSettlementVertexId)
+        {
+            throw new InvalidOperationException("The road must connect to the settlement that was just placed.");
+        }
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        edge.Road = new RoadState { UserId = userId, Color = player.Color };
+        game.PendingSettlementVertexId = null;
+        AdvanceInitialPlacement(game);
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken) =>
+        await dbContext.Games.Include(game => game.Players)
+            .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new InvalidOperationException("The game was not found.");
+
+    private static void EnsureActiveGame(Game game, string userId)
+    {
+        if (!game.Players.Any(player => player.UserId == userId))
+        {
+            throw new UnauthorizedAccessException("Only players may access this game.");
+        }
+
+        if (game.Status != GameStatus.InProgress || game.Phase is null || game.BoardStateJson is null)
+        {
+            throw new InvalidOperationException("The game is not in progress.");
+        }
+    }
+
+    private static void EnsureCurrentInitialPlayer(Game game, string userId)
+    {
+        if (!IsInitialPlacement(game.Phase))
+        {
+            throw new InvalidOperationException("Initial placement has ended.");
+        }
+
+        if (game.CurrentPlayerUserId != userId)
+        {
+            throw new InvalidOperationException("It is not this player's turn.");
+        }
+    }
+
+    private static bool IsInitialPlacement(GamePhase? phase) =>
+        phase is GamePhase.InitialPlacementForward or GamePhase.InitialPlacementReverse;
+
+    private static void AdvanceInitialPlacement(Game game)
+    {
+        var players = game.Players.OrderBy(player => player.TurnOrder).ToList();
+        var currentIndex = players.FindIndex(player => player.UserId == game.CurrentPlayerUserId);
+        if (game.Phase == GamePhase.InitialPlacementForward)
+        {
+            if (currentIndex < players.Count - 1)
+            {
+                game.CurrentPlayerUserId = players[currentIndex + 1].UserId;
+            }
+            else
+            {
+                game.Phase = GamePhase.InitialPlacementReverse;
+            }
+        }
+        else if (currentIndex > 0)
+        {
+            game.CurrentPlayerUserId = players[currentIndex - 1].UserId;
+        }
+        else
+        {
+            game.Phase = GamePhase.TurnProduction;
+            game.CurrentPlayerUserId = players[0].UserId;
+        }
+    }
+
+    private static string TurnOrderKey(int seed, string userId) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{seed}:{userId}")));
+
+    private static string SerializeBoard(BoardState board) => JsonSerializer.Serialize(board);
+
+    private static BoardState DeserializeBoard(string json) =>
+        JsonSerializer.Deserialize<BoardState>(json)
+        ?? throw new InvalidOperationException("The persisted board state is invalid.");
 
     private async Task<GamePlayer> JoinAsync(
         string userId,

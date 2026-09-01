@@ -7,6 +7,8 @@ namespace WebVibeTest.Hubs;
 public sealed class GameHub : Hub
 {
     public const string LobbyUpdatedEvent = "LobbyUpdated";
+    public const string GameStartedEvent = "GameStarted";
+    public const string GameStateUpdatedEvent = "GameStateUpdated";
 
     public Task JoinLobby(Guid gameId) =>
         Groups.AddToGroupAsync(Context.ConnectionId, GroupName(gameId));

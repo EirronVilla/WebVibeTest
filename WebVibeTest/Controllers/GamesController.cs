@@ -133,6 +133,7 @@ public sealed class GamesController(
             IsPrivate = lobby.IsPrivate,
             JoinCode = lobby.JoinCode,
             IsCurrentUserHost = lobby.IsCurrentUserHost,
+            CanStart = lobby.CanStart,
             Players = lobby.Players
                 .Select(player => new LobbyPlayerViewModel
                 {
@@ -145,6 +146,90 @@ public sealed class GamesController(
         };
 
         return View(model);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Start(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.StartGameAsync(CurrentUserId, id, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id))
+                .SendAsync(GameHub.GameStartedEvent, id, cancellationToken);
+            return RedirectToAction(nameof(Play), new { id });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException exception)
+        {
+            TempData["Error"] = exception.Message;
+            return RedirectToAction(nameof(Lobby), new { id });
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> Play(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return View(await gameService.GetActiveGameAsync(CurrentUserId, id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException exception)
+        {
+            TempData["Error"] = exception.Message;
+            return RedirectToAction(nameof(Index));
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> PlaceSettlement(Guid id, int vertexId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.PlaceInitialSettlementAsync(CurrentUserId, id, vertexId, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> PlaceRoad(Guid id, int edgeId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.PlaceInitialRoadAsync(CurrentUserId, id, edgeId, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
     }
 
     [HttpPost]
@@ -170,4 +255,8 @@ public sealed class GamesController(
     private Task NotifyLobbyChangedAsync(Guid gameId, CancellationToken cancellationToken) =>
         hubContext.Clients.Group(GameHub.GroupName(gameId))
             .SendAsync(GameHub.LobbyUpdatedEvent, gameId, cancellationToken);
+
+    private Task NotifyGameStateChangedAsync(Guid gameId, CancellationToken cancellationToken) =>
+        hubContext.Clients.Group(GameHub.GroupName(gameId))
+            .SendAsync(GameHub.GameStateUpdatedEvent, gameId, cancellationToken);
 }
