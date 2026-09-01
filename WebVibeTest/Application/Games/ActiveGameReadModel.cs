@@ -19,7 +19,19 @@ public sealed record ActiveGameReadModel(
     BoardState Board,
     IReadOnlySet<int> AvailableConstructionVertexIds,
     IReadOnlySet<int> ValidSettlementVertexIds,
-    IReadOnlySet<int> ValidRoadEdgeIds);
+    IReadOnlySet<int> ValidRoadEdgeIds,
+    ConstructionReadModel Construction);
+
+public sealed record ConstructionReadModel(
+    int RoadsRemaining,
+    int SettlementsRemaining,
+    int CitiesRemaining,
+    bool CanAffordRoad,
+    bool CanAffordSettlement,
+    bool CanAffordCity,
+    IReadOnlySet<int> ValidRoadEdgeIds,
+    IReadOnlySet<int> ValidSettlementVertexIds,
+    IReadOnlySet<int> ValidCityVertexIds);
 
 public sealed record ResourceInventory(int Brick, int Lumber, int Wool, int Grain, int Ore)
 {
@@ -41,6 +53,7 @@ public sealed record PublicPlayerState(
     string DisplayName,
     PlayerColor Color,
     int TotalResources,
+    int VisibleVictoryPoints,
     bool IsCurrentPlayer);
 public sealed record RobberyTarget(string UserId, string DisplayName);
 
@@ -54,3 +67,4 @@ public sealed record DiceRollResult(int Die1, int Die2, IReadOnlyList<Production
 public sealed record RobberMoveResult(int HexId, bool RequiresTarget);
 public sealed record RobberyResult(string TargetUserId);
 public sealed record TurnChangeResult(string CurrentPlayerUserId);
+public sealed record BuildResult(string BuildingType, int LocationId, string UserId);

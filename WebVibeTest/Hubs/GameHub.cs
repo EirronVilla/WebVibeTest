@@ -14,6 +14,7 @@ public sealed class GameHub : Hub
     public const string ResourceCountsChangedEvent = "ResourceCountsChanged";
     public const string RobberMovedEvent = "RobberMoved";
     public const string TurnChangedEvent = "TurnChanged";
+    public const string BuildingPlacedEvent = "BuildingPlaced";
 
     public Task JoinLobby(Guid gameId) =>
         Groups.AddToGroupAsync(Context.ConnectionId, GroupName(gameId));

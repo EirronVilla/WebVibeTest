@@ -34,7 +34,7 @@
                                 <span class="turn-badge">Playing now</span>
                             }
                         </span>
-                        <span class="resource-total">@player.TotalResources resource cards</span>
+                        <span class="resource-total">@player.VisibleVictoryPoints VP &middot; @player.TotalResources resource cards</span>
                     </li>
                 }
             </ul>
@@ -111,6 +111,38 @@
 
 @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnActions)
 {
+    <div class="card border-primary mb-3"><div class="card-body">
+        <h2 class="h5">Build</h2>
+        <div class="d-flex flex-wrap gap-2">
+            @if (Model.Construction.CanAffordRoad && Model.Construction.RoadsRemaining > 0 && Model.Construction.ValidRoadEdgeIds.Count > 0)
+            {
+                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="road">Road <small>(1 Brick, 1 Lumber)</small></button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-outline-secondary" disabled>Road <small>(1 Brick, 1 Lumber)</small></button>
+            }
+            @if (Model.Construction.CanAffordSettlement && Model.Construction.SettlementsRemaining > 0 && Model.Construction.ValidSettlementVertexIds.Count > 0)
+            {
+                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="settlement">Settlement <small>(Brick, Lumber, Wool, Grain)</small></button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-outline-secondary" disabled>Settlement <small>(Brick, Lumber, Wool, Grain)</small></button>
+            }
+            @if (Model.Construction.CanAffordCity && Model.Construction.CitiesRemaining > 0 && Model.Construction.ValidCityVertexIds.Count > 0)
+            {
+                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="city">City <small>(3 Ore, 2 Grain)</small></button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-outline-secondary" disabled>City <small>(3 Ore, 2 Grain)</small></button>
+            }
+        </div>
+        <div class="small text-muted mt-2">
+            Pieces remaining: @Model.Construction.RoadsRemaining roads, @Model.Construction.SettlementsRemaining settlements, @Model.Construction.CitiesRemaining cities.
+        </div>
+    </div></div>
     <button type="button" id="end-turn" class="btn btn-primary mb-3">End turn</button>
 }
 
@@ -206,6 +238,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         {
             <line class="placement-location" data-edge-id="@edge.Id" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" stroke="#00a6ff" stroke-width="0.18" stroke-linecap="round" opacity="0.7" />
         }
+        @if (Model.Construction.ValidRoadEdgeIds.Contains(edge.Id))
+        {
+            <line class="placement-location normal-build-location build-road-location d-none" data-build-road-edge-id="@edge.Id" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" stroke="#ffd43b" stroke-width="0.2" stroke-linecap="round" opacity="0.85" />
+        }
     }
 
     @foreach (var port in board.Ports)
@@ -233,6 +269,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                        preserveAspectRatio="xMidYMid meet"
                        pointer-events="none" />
             }
+            @if (Model.Construction.ValidCityVertexIds.Contains(vertex.Id))
+            {
+                <circle class="placement-location normal-build-location build-city-location d-none" data-build-city-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.24" fill="#ffd43b" fill-opacity="0.35" stroke="#ffd43b" stroke-width="0.055" />
+            }
         }
         else if (Model.AvailableConstructionVertexIds.Contains(vertex.Id))
         {
@@ -243,6 +283,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             else
             {
                 <circle class="available-vertex" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.13" fill="none" stroke="#111" stroke-width="0.045" pointer-events="none" />
+            }
+            @if (Model.Construction.ValidSettlementVertexIds.Contains(vertex.Id))
+            {
+                <circle class="placement-location normal-build-location build-settlement-location d-none" data-build-settlement-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.19" fill="#ffd43b" fill-opacity="0.3" stroke="#ffd43b" stroke-width="0.055" />
             }
         }
         else
@@ -402,6 +446,18 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 element.addEventListener('click', () => postCommand('@Url.Action("MoveRobber", "Games")', { hexId: element.dataset.robberHexId })));
             document.querySelectorAll('[data-target-user-id]').forEach(element =>
                 element.addEventListener('click', () => postCommand('@Url.Action("RobPlayer", "Games")', { targetUserId: element.dataset.targetUserId })));
+            document.querySelectorAll('[data-build-road-edge-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("BuildRoad", "Games")', { edgeId: element.dataset.buildRoadEdgeId })));
+            document.querySelectorAll('[data-build-settlement-vertex-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("BuildSettlement", "Games")', { vertexId: element.dataset.buildSettlementVertexId })));
+            document.querySelectorAll('[data-build-city-vertex-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("BuildCity", "Games")', { vertexId: element.dataset.buildCityVertexId })));
+            document.querySelectorAll('[data-build-mode]').forEach(button => button.addEventListener('click', () => {
+                document.querySelectorAll('.normal-build-location').forEach(location => location.classList.add('d-none'));
+                document.querySelectorAll('[data-build-mode]').forEach(candidate => candidate.classList.remove('active'));
+                document.querySelectorAll(`.build-${button.dataset.buildMode}-location`).forEach(location => location.classList.remove('d-none'));
+                button.classList.add('active');
+            }));
             document.getElementById('roll-dice')?.addEventListener('click', () => postCommand('@Url.Action("RollDice", "Games")'));
             document.getElementById('end-turn')?.addEventListener('click', () => postCommand('@Url.Action("EndTurn", "Games")'));
             document.getElementById('discard-resources')?.addEventListener('click', () => {

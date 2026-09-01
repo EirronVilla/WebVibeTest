@@ -282,6 +282,22 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .Where(identity => playerUserIds.Contains(identity.Id))
             .ToDictionaryAsync(identity => identity.Id, identity => identity.UserName ?? identity.Email ?? identity.Id, cancellationToken);
         var ownPlayer = game.Players.Single(player => player.UserId == userId);
+        var ownRoadCount = board.Edges.Count(edge => edge.Road?.UserId == userId);
+        var ownSettlementCount = board.Vertices.Count(vertex => vertex.Settlement?.UserId == userId
+            && vertex.Settlement.BuildingType == BuildingType.Settlement);
+        var ownCityCount = board.Vertices.Count(vertex => vertex.Settlement?.UserId == userId
+            && vertex.Settlement.BuildingType == BuildingType.City);
+        var canConstruct = isCurrentPlayer && game.Phase == GamePhase.TurnActions;
+        var construction = new ConstructionReadModel(
+            15 - ownRoadCount,
+            5 - ownSettlementCount,
+            4 - ownCityCount,
+            ownPlayer.Brick >= 1 && ownPlayer.Lumber >= 1,
+            ownPlayer.Brick >= 1 && ownPlayer.Lumber >= 1 && ownPlayer.Wool >= 1 && ownPlayer.Grain >= 1,
+            ownPlayer.Ore >= 3 && ownPlayer.Grain >= 2,
+            canConstruct && ownRoadCount < 15 ? GetValidRoadBuildEdges(board, userId) : new HashSet<int>(),
+            canConstruct && ownSettlementCount < 5 ? GetValidSettlementBuildVertices(board, userId) : new HashSet<int>(),
+            canConstruct && ownCityCount < 4 ? GetValidCityBuildVertices(board, userId) : new HashSet<int>());
         var eligibleTargets = game.Phase == GamePhase.AwaitingRobberyTarget && isCurrentPlayer
             ? GetEligibleRobberyTargets(game, board)
                 .Select(player => new RobberyTarget(player.UserId, userNames.GetValueOrDefault(player.UserId, "Unknown")))
@@ -305,13 +321,15 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                     userNames.GetValueOrDefault(player.UserId, "Unknown"),
                     player.Color,
                     player.TotalResources,
+                    player.VisibleVictoryPoints,
                     player.UserId == game.CurrentPlayerUserId))
                 .ToList(),
             eligibleTargets,
             board,
             availableConstructionVertices,
             validSettlements,
-            validRoads);
+            validRoads,
+            construction);
     }
 
     public async Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
@@ -342,6 +360,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
 
         var player = game.Players.Single(candidate => candidate.UserId == userId);
         vertex.Settlement = new SettlementState { UserId = userId, Color = player.Color };
+        player.VisibleVictoryPoints += 1;
         game.PendingSettlementVertexId = vertex.Id;
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -527,10 +546,137 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         return new TurnChangeResult(nextPlayer.UserId);
     }
 
+    public async Task<BuildResult> BuildRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Roads may only be built by the active player during turn actions.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var edge = board.Edges.SingleOrDefault(candidate => candidate.Id == edgeId)
+            ?? throw new ArgumentException("The selected edge does not exist.", nameof(edgeId));
+        if (edge.Road is not null) throw new InvalidOperationException("That edge already contains a road.");
+        if (board.Edges.Count(candidate => candidate.Road?.UserId == userId) >= 15)
+            throw new InvalidOperationException("The player has no road pieces remaining.");
+        if (!GetValidRoadBuildEdges(board, userId).Contains(edgeId))
+            throw new InvalidOperationException("The road must connect to this player's uninterrupted road or building network.");
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        EnsureResources(player, (ResourceType.Brick, 1), (ResourceType.Lumber, 1));
+        edge.Road = new RoadState { UserId = userId, Color = player.Color };
+        player.RemoveResource(ResourceType.Brick, 1);
+        player.RemoveResource(ResourceType.Lumber, 1);
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new BuildResult("Road", edgeId, userId);
+    }
+
+    public async Task<BuildResult> BuildSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Settlements may only be built by the active player during turn actions.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var vertex = board.Vertices.SingleOrDefault(candidate => candidate.Id == vertexId)
+            ?? throw new ArgumentException("The selected intersection does not exist.", nameof(vertexId));
+        if (vertex.Settlement is not null) throw new InvalidOperationException("That intersection already contains a building.");
+        if (board.Vertices.Count(candidate => candidate.Settlement?.UserId == userId
+                && candidate.Settlement.BuildingType == BuildingType.Settlement) >= 5)
+            throw new InvalidOperationException("The player has no settlement pieces remaining.");
+        if (!GetValidSettlementBuildVertices(board, userId).Contains(vertexId))
+            throw new InvalidOperationException("The settlement must connect to this player's road and respect the distance rule.");
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        EnsureResources(player, (ResourceType.Brick, 1), (ResourceType.Lumber, 1), (ResourceType.Wool, 1), (ResourceType.Grain, 1));
+        vertex.Settlement = new SettlementState { UserId = userId, Color = player.Color, BuildingType = BuildingType.Settlement };
+        player.RemoveResource(ResourceType.Brick, 1);
+        player.RemoveResource(ResourceType.Lumber, 1);
+        player.RemoveResource(ResourceType.Wool, 1);
+        player.RemoveResource(ResourceType.Grain, 1);
+        player.VisibleVictoryPoints += 1;
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new BuildResult("Settlement", vertexId, userId);
+    }
+
+    public async Task<BuildResult> BuildCityAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Cities may only be built by the active player during turn actions.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var vertex = board.Vertices.SingleOrDefault(candidate => candidate.Id == vertexId)
+            ?? throw new ArgumentException("The selected intersection does not exist.", nameof(vertexId));
+        if (vertex.Settlement?.UserId != userId || vertex.Settlement.BuildingType != BuildingType.Settlement)
+            throw new InvalidOperationException("A city may only replace one of the player's own settlements.");
+        if (board.Vertices.Count(candidate => candidate.Settlement?.UserId == userId
+                && candidate.Settlement.BuildingType == BuildingType.City) >= 4)
+            throw new InvalidOperationException("The player has no city pieces remaining.");
+
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        EnsureResources(player, (ResourceType.Ore, 3), (ResourceType.Grain, 2));
+        vertex.Settlement.BuildingType = BuildingType.City;
+        player.RemoveResource(ResourceType.Ore, 3);
+        player.RemoveResource(ResourceType.Grain, 2);
+        player.VisibleVictoryPoints += 1;
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new BuildResult("City", vertexId, userId);
+    }
+
     private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken) =>
         await dbContext.Games.Include(game => game.Players)
             .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("The game was not found.");
+
+    private static HashSet<int> GetValidRoadBuildEdges(BoardState board, string userId) =>
+        board.Edges
+            .Where(edge => edge.Road is null
+                && (CanExtendRoadAtVertex(board, edge, edge.VertexAId, userId)
+                    || CanExtendRoadAtVertex(board, edge, edge.VertexBId, userId)))
+            .Select(edge => edge.Id)
+            .ToHashSet();
+
+    private static bool CanExtendRoadAtVertex(BoardState board, BoardEdge candidateEdge, int vertexId, string userId)
+    {
+        var vertex = board.Vertices[vertexId];
+        if (vertex.Settlement?.UserId == userId) return true;
+        if (vertex.Settlement is not null) return false;
+        return vertex.EdgeIds
+            .Where(edgeId => edgeId != candidateEdge.Id)
+            .Any(edgeId => board.Edges[edgeId].Road?.UserId == userId);
+    }
+
+    private static HashSet<int> GetValidSettlementBuildVertices(BoardState board, string userId) =>
+        board.Vertices
+            .Where(vertex => vertex.Settlement is null
+                && vertex.AdjacentVertexIds.All(adjacentId => board.Vertices[adjacentId].Settlement is null)
+                && vertex.EdgeIds.Any(edgeId => board.Edges[edgeId].Road?.UserId == userId))
+            .Select(vertex => vertex.Id)
+            .ToHashSet();
+
+    private static HashSet<int> GetValidCityBuildVertices(BoardState board, string userId) =>
+        board.Vertices
+            .Where(vertex => vertex.Settlement?.UserId == userId
+                && vertex.Settlement.BuildingType == BuildingType.Settlement)
+            .Select(vertex => vertex.Id)
+            .ToHashSet();
+
+    private static void EnsureResources(GamePlayer player, params (ResourceType Resource, int Amount)[] costs)
+    {
+        if (costs.Any(cost => player.GetResource(cost.Resource) < cost.Amount))
+        {
+            throw new InvalidOperationException("The player does not have the resources required for this build.");
+        }
+    }
 
     private static Dictionary<string, int> ProduceResources(Game game, BoardState board, int diceTotal)
     {

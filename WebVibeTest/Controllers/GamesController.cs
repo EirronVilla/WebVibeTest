@@ -340,6 +340,54 @@ public sealed class GamesController(
 
     [HttpPost]
     [ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuildRoad(Guid id, int edgeId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.BuildRoadAsync(CurrentUserId, id, edgeId, cancellationToken);
+            await BroadcastBuildAsync(id, result, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuildSettlement(Guid id, int vertexId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.BuildSettlementAsync(CurrentUserId, id, vertexId, cancellationToken);
+            await BroadcastBuildAsync(id, result, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuildCity(Guid id, int vertexId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.BuildCityAsync(CurrentUserId, id, vertexId, cancellationToken);
+            await BroadcastBuildAsync(id, result, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return BadRequest(exception.Message);
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
     public async Task<IActionResult> Leave(Guid id, CancellationToken cancellationToken)
     {
         try
@@ -365,4 +413,18 @@ public sealed class GamesController(
     private Task NotifyGameStateChangedAsync(Guid gameId, CancellationToken cancellationToken) =>
         hubContext.Clients.Group(GameHub.GroupName(gameId))
             .SendAsync(GameHub.GameStateUpdatedEvent, gameId, cancellationToken);
+
+    private async Task BroadcastBuildAsync(Guid gameId, BuildResult result, CancellationToken cancellationToken)
+    {
+        var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
+        await clients.SendAsync(GameHub.BuildingPlacedEvent, new
+        {
+            gameId,
+            result.BuildingType,
+            result.LocationId,
+            result.UserId
+        }, cancellationToken);
+        await clients.SendAsync(GameHub.ResourceCountsChangedEvent, gameId, cancellationToken);
+        await NotifyGameStateChangedAsync(gameId, cancellationToken);
+    }
 }
