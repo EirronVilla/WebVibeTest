@@ -21,7 +21,8 @@ public sealed record ActiveGameReadModel(
     IReadOnlySet<int> ValidSettlementVertexIds,
     IReadOnlySet<int> ValidRoadEdgeIds,
     ConstructionReadModel Construction,
-    TradingReadModel Trading);
+    TradingReadModel Trading,
+    DevelopmentCardsReadModel DevelopmentCards);
 
 public sealed record ConstructionReadModel(
     int RoadsRemaining,
@@ -55,6 +56,7 @@ public sealed record PublicPlayerState(
     PlayerColor Color,
     int TotalResources,
     int VisibleVictoryPoints,
+    int DevelopmentCardCount,
     bool IsCurrentPlayer);
 public sealed record RobberyTarget(string UserId, string DisplayName);
 
@@ -92,3 +94,17 @@ public sealed record TradeOfferReadModel(
 public sealed record TradeResponseReadModel(string UserId, string DisplayName, TradeResponseStatus Status);
 public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds);
 public sealed record MaritimeTradeResult(ResourceType Given, int Rate, ResourceType Received);
+
+public sealed record DevelopmentCardsReadModel(
+    IReadOnlyList<DevelopmentCardReadModel> OwnCards,
+    int DeckRemaining,
+    ResourceInventory Bank,
+    bool CanBuy,
+    int ActualVictoryPoints,
+    int KnightsPlayed,
+    int FreeRoadsRemaining,
+    IReadOnlySet<int> ValidFreeRoadEdgeIds);
+
+public sealed record DevelopmentCardReadModel(Guid Id, DevelopmentCardType Type, bool CanPlay, bool IsNew);
+public sealed record DevelopmentCardPurchaseResult(Guid CardId, DevelopmentCardType Type, string OwnerUserId);
+public sealed record DevelopmentCardPlayResult(Guid CardId, DevelopmentCardType Type, string PlayerUserId);

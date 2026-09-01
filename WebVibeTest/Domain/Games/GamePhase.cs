@@ -8,6 +8,7 @@ public enum GamePhase
     AwaitingDiscards,
     AwaitingRobberPlacement,
     AwaitingRobberyTarget,
+    AwaitingRoadBuilding,
     TurnActions,
     Completed
 }

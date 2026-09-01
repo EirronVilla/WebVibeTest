@@ -14,6 +14,8 @@ public sealed class GameConfiguration : IEntityTypeConfiguration<Game>
         builder.Property(game => game.JoinCode).HasMaxLength(12);
         builder.Property(game => game.HostUserId).IsRequired();
         builder.Property(game => game.BoardStateJson).HasColumnType("jsonb");
+        builder.Property(game => game.DevelopmentDeckJson).HasColumnType("jsonb");
+        builder.Property(game => game.ResourceBankJson).HasColumnType("jsonb");
         builder.HasIndex(game => game.JoinCode).IsUnique();
         builder.ToTable(table => table.HasCheckConstraint("CK_Games_MaxPlayers", "\"MaxPlayers\" BETWEEN 3 AND 6"));
 

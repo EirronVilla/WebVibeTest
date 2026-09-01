@@ -24,6 +24,13 @@ public interface IGameService
     Task<TradeEventResult> FinalizeTradeAsync(string userId, Guid gameId, Guid offerId, string acceptingUserId, CancellationToken cancellationToken = default);
     Task<TradeEventResult> CancelTradeAsync(string userId, Guid gameId, Guid offerId, CancellationToken cancellationToken = default);
     Task<MaritimeTradeResult> MaritimeTradeAsync(string userId, Guid gameId, ResourceType give, ResourceType receive, CancellationToken cancellationToken = default);
+    Task<DevelopmentCardPurchaseResult> BuyDevelopmentCardAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
+    Task<DevelopmentCardPlayResult> PlayKnightAsync(string userId, Guid gameId, Guid cardId, CancellationToken cancellationToken = default);
+    Task<DevelopmentCardPlayResult> PlayRoadBuildingAsync(string userId, Guid gameId, Guid cardId, CancellationToken cancellationToken = default);
+    Task<DevelopmentCardPlayResult> PlayYearOfPlentyAsync(string userId, Guid gameId, Guid cardId, ResourceType first, ResourceType second, CancellationToken cancellationToken = default);
+    Task<DevelopmentCardPlayResult> PlayMonopolyAsync(string userId, Guid gameId, Guid cardId, ResourceType resource, CancellationToken cancellationToken = default);
+    Task<BuildResult> BuildFreeRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default);
+    Task FinishRoadBuildingAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task<Game> CreateGameAsync(string userId, string name, int maxPlayers, bool isPrivate, CancellationToken cancellationToken = default);
     Task<GamePlayer> JoinPublicGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task<GamePlayer> JoinPrivateGameAsync(string userId, string joinCode, CancellationToken cancellationToken = default);

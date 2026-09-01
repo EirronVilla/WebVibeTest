@@ -238,6 +238,11 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         game.Phase = GamePhase.InitialPlacementForward;
         game.CurrentPlayerUserId = orderedPlayers[0].UserId;
         game.PendingSettlementVertexId = null;
+        game.DevelopmentDeckJson = SerializeDeck(CreateDevelopmentDeck(game.Players.Count));
+        game.ResourceBankJson = SerializeBank(CreateResourceBank(game.Players.Count));
+        game.TurnNumber = 1;
+        game.DevelopmentCardPlayedThisTurn = false;
+        game.FreeRoadsRemaining = 0;
         game.StartedAt = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -282,6 +287,14 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .Where(identity => playerUserIds.Contains(identity.Id))
             .ToDictionaryAsync(identity => identity.Id, identity => identity.UserName ?? identity.Email ?? identity.Id, cancellationToken);
         var ownPlayer = game.Players.Single(player => player.UserId == userId);
+        var cards = await dbContext.DevelopmentCards.AsNoTracking()
+            .Where(card => card.GameId == gameId && card.PlayedAt == null)
+            .ToListAsync(cancellationToken);
+        var cardCounts = cards.GroupBy(card => card.OwnerUserId).ToDictionary(group => group.Key, group => group.Count());
+        var deck = string.IsNullOrWhiteSpace(game.DevelopmentDeckJson)
+            ? CreateDevelopmentDeck(game.Players.Count)
+            : DeserializeDeck(game.DevelopmentDeckJson);
+        var bank = DeserializeBank(game.ResourceBankJson, game);
         var ownRoadCount = board.Edges.Count(edge => edge.Road?.UserId == userId);
         var ownSettlementCount = board.Vertices.Count(vertex => vertex.Settlement?.UserId == userId
             && vertex.Settlement.BuildingType == BuildingType.Settlement);
@@ -345,6 +358,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                     player.Color,
                     player.TotalResources,
                     player.VisibleVictoryPoints,
+                    cardCounts.GetValueOrDefault(player.UserId),
                     player.UserId == game.CurrentPlayerUserId))
                 .ToList(),
             eligibleTargets,
@@ -353,7 +367,26 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             validSettlements,
             validRoads,
             construction,
-            trading);
+            trading,
+            new DevelopmentCardsReadModel(
+                cards.Where(card => card.OwnerUserId == userId)
+                    .OrderBy(card => card.PurchasedAt)
+                    .Select(card => new DevelopmentCardReadModel(
+                        card.Id,
+                        card.Type,
+                        CanPlayDevelopmentCard(game, userId, card),
+                        card.PurchasedTurnNumber == game.TurnNumber))
+                    .ToList(),
+                deck.Count,
+                new ResourceInventory(bank.Brick, bank.Lumber, bank.Wool, bank.Grain, bank.Ore),
+                isCurrentPlayer && game.Phase == GamePhase.TurnActions && deck.Count > 0
+                    && ownPlayer.Ore > 0 && ownPlayer.Wool > 0 && ownPlayer.Grain > 0,
+                ownPlayer.VisibleVictoryPoints + cards.Count(card => card.OwnerUserId == userId && card.Type == DevelopmentCardType.VictoryPoint),
+                ownPlayer.KnightsPlayed,
+                game.FreeRoadsRemaining,
+                isCurrentPlayer && game.Phase == GamePhase.AwaitingRoadBuilding
+                    ? GetValidRoadBuildEdges(board, userId)
+                    : new HashSet<int>()));
     }
 
     public async Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
@@ -454,7 +487,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         }
         else
         {
-            var produced = ProduceResources(game, DeserializeBoard(game.BoardStateJson!), total);
+            var bank = DeserializeBank(game.ResourceBankJson, game);
+            var produced = ProduceResources(game, DeserializeBoard(game.BoardStateJson!), total, bank);
+            game.ResourceBankJson = SerializeBank(bank);
             production.AddRange(produced.Select(item => new ProductionSummary(item.Key, item.Value)));
             game.Phase = GamePhase.TurnActions;
         }
@@ -497,6 +532,10 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         player.RemoveResource(ResourceType.Grain, discard.Grain);
         player.RemoveResource(ResourceType.Ore, discard.Ore);
         player.RequiredDiscardCount = 0;
+        var bank = DeserializeBank(game.ResourceBankJson, game);
+        foreach (var (resource, amount) in BundleValues(new ResourceBundle(discard.Brick, discard.Lumber, discard.Wool, discard.Grain, discard.Ore)))
+            bank.Add(resource, amount);
+        game.ResourceBankJson = SerializeBank(bank);
         if (game.Players.All(candidate => candidate.RequiredDiscardCount == 0))
         {
             game.Phase = GamePhase.AwaitingRobberPlacement;
@@ -569,6 +608,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         foreach (var offer in openOffers) offer.Status = TradeStatus.Cancelled;
         game.CurrentPlayerUserId = nextPlayer.UserId;
         game.Phase = GamePhase.TurnProduction;
+        game.TurnNumber += 1;
+        game.DevelopmentCardPlayedThisTurn = false;
+        game.FreeRoadsRemaining = 0;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new TurnChangeResult(nextPlayer.UserId, openOffers.Select(offer => offer.Id).ToList());
@@ -595,6 +637,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         edge.Road = new RoadState { UserId = userId, Color = player.Color };
         player.RemoveResource(ResourceType.Brick, 1);
         player.RemoveResource(ResourceType.Lumber, 1);
+        ReturnToBank(game, (ResourceType.Brick, 1), (ResourceType.Lumber, 1));
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -625,6 +668,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         player.RemoveResource(ResourceType.Lumber, 1);
         player.RemoveResource(ResourceType.Wool, 1);
         player.RemoveResource(ResourceType.Grain, 1);
+        ReturnToBank(game, (ResourceType.Brick, 1), (ResourceType.Lumber, 1), (ResourceType.Wool, 1), (ResourceType.Grain, 1));
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -653,11 +697,142 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         vertex.Settlement.BuildingType = BuildingType.City;
         player.RemoveResource(ResourceType.Ore, 3);
         player.RemoveResource(ResourceType.Grain, 2);
+        ReturnToBank(game, (ResourceType.Ore, 3), (ResourceType.Grain, 2));
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("City", vertexId, userId);
+    }
+
+    public async Task<DevelopmentCardPurchaseResult> BuyDevelopmentCardAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Development cards may only be bought during the active player's action phase.");
+        var deck = string.IsNullOrWhiteSpace(game.DevelopmentDeckJson)
+            ? CreateDevelopmentDeck(game.Players.Count)
+            : DeserializeDeck(game.DevelopmentDeckJson);
+        if (deck.Count == 0) throw new InvalidOperationException("The development-card deck is empty.");
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        EnsureResources(player, (ResourceType.Ore, 1), (ResourceType.Wool, 1), (ResourceType.Grain, 1));
+        var bank = DeserializeBank(game.ResourceBankJson, game);
+        foreach (var resource in new[] { ResourceType.Ore, ResourceType.Wool, ResourceType.Grain })
+        {
+            player.RemoveResource(resource, 1);
+            bank.Add(resource, 1);
+        }
+        var type = deck[^1];
+        deck.RemoveAt(deck.Count - 1);
+        var card = new DevelopmentCard
+        {
+            Id = Guid.NewGuid(), GameId = gameId, OwnerUserId = userId, Type = type,
+            PurchasedTurnNumber = game.TurnNumber, PurchasedAt = DateTime.UtcNow
+        };
+        dbContext.DevelopmentCards.Add(card);
+        game.DevelopmentDeckJson = SerializeDeck(deck);
+        game.ResourceBankJson = SerializeBank(bank);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new DevelopmentCardPurchaseResult(card.Id, type, userId);
+    }
+
+    public async Task<DevelopmentCardPlayResult> PlayKnightAsync(string userId, Guid gameId, Guid cardId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        var card = await LoadPlayableCardAsync(game, userId, cardId, DevelopmentCardType.Knight, cancellationToken);
+        game.Players.Single(player => player.UserId == userId).KnightsPlayed++;
+        CompleteCardPlay(game, card);
+        game.Phase = GamePhase.AwaitingRobberPlacement;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(card.Id, card.Type, userId);
+    }
+
+    public async Task<DevelopmentCardPlayResult> PlayRoadBuildingAsync(string userId, Guid gameId, Guid cardId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        var card = await LoadPlayableCardAsync(game, userId, cardId, DevelopmentCardType.RoadBuilding, cancellationToken);
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var roadsAvailable = 15 - board.Edges.Count(edge => edge.Road?.UserId == userId);
+        CompleteCardPlay(game, card);
+        game.FreeRoadsRemaining = Math.Min(2, roadsAvailable);
+        game.Phase = game.FreeRoadsRemaining > 0 && GetValidRoadBuildEdges(board, userId).Count > 0
+            ? GamePhase.AwaitingRoadBuilding : GamePhase.TurnActions;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(card.Id, card.Type, userId);
+    }
+
+    public async Task<DevelopmentCardPlayResult> PlayYearOfPlentyAsync(string userId, Guid gameId, Guid cardId, ResourceType first, ResourceType second, CancellationToken cancellationToken = default)
+    {
+        EnsureResourceType(first); EnsureResourceType(second);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        var card = await LoadPlayableCardAsync(game, userId, cardId, DevelopmentCardType.YearOfPlenty, cancellationToken);
+        var bank = DeserializeBank(game.ResourceBankJson, game);
+        if (bank.Get(first) < (first == second ? 2 : 1) || bank.Get(second) < 1)
+            throw new InvalidOperationException("The bank does not contain the selected resources.");
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        foreach (var resource in new[] { first, second }) { bank.Remove(resource, 1); player.AddResource(resource, 1); }
+        CompleteCardPlay(game, card);
+        game.ResourceBankJson = SerializeBank(bank);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(card.Id, card.Type, userId);
+    }
+
+    public async Task<DevelopmentCardPlayResult> PlayMonopolyAsync(string userId, Guid gameId, Guid cardId, ResourceType resource, CancellationToken cancellationToken = default)
+    {
+        EnsureResourceType(resource);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        var card = await LoadPlayableCardAsync(game, userId, cardId, DevelopmentCardType.Monopoly, cancellationToken);
+        var owner = game.Players.Single(player => player.UserId == userId);
+        foreach (var opponent in game.Players.Where(player => player.UserId != userId))
+        {
+            var amount = opponent.GetResource(resource);
+            if (amount == 0) continue;
+            opponent.RemoveResource(resource, amount); owner.AddResource(resource, amount);
+        }
+        CompleteCardPlay(game, card);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(card.Id, card.Type, userId);
+    }
+
+    public async Task<BuildResult> BuildFreeRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.AwaitingRoadBuilding, "A free road cannot be placed now.");
+        if (game.FreeRoadsRemaining <= 0) throw new InvalidOperationException("No free road placements remain.");
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var edge = board.Edges.SingleOrDefault(candidate => candidate.Id == edgeId) ?? throw new ArgumentException("The edge does not exist.");
+        if (!GetValidRoadBuildEdges(board, userId).Contains(edgeId)) throw new InvalidOperationException("That is not a valid road location.");
+        var player = game.Players.Single(candidate => candidate.UserId == userId);
+        if (board.Edges.Count(candidate => candidate.Road?.UserId == userId) >= 15) throw new InvalidOperationException("No road pieces remain.");
+        edge.Road = new RoadState { UserId = userId, Color = player.Color };
+        game.FreeRoadsRemaining--;
+        if (game.FreeRoadsRemaining == 0 || GetValidRoadBuildEdges(board, userId).Count == 0) game.Phase = GamePhase.TurnActions;
+        game.BoardStateJson = SerializeBoard(board);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new("Road", edgeId, userId);
+    }
+
+    public async Task FinishRoadBuildingAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        var game = await LoadActiveGameAsync(gameId, cancellationToken);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.AwaitingRoadBuilding, "Road Building is not being resolved.");
+        game.FreeRoadsRemaining = 0; game.Phase = GamePhase.TurnActions;
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public Task<bool> CanAccessGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
@@ -779,8 +954,13 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var rate = GetMaritimeRates(board, userId)[give];
         var player = game.Players.Single(candidate => candidate.UserId == userId);
         if (player.GetResource(give) < rate) throw new InvalidOperationException($"This trade requires {rate} {give} cards.");
+        var bank = DeserializeBank(game.ResourceBankJson, game);
+        if (bank.Get(receive) < 1) throw new InvalidOperationException("The bank does not contain the requested resource.");
         player.RemoveResource(give, rate);
         player.AddResource(receive, 1);
+        bank.Add(give, rate);
+        bank.Remove(receive, 1);
+        game.ResourceBankJson = SerializeBank(bank);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new MaritimeTradeResult(give, rate, receive);
@@ -914,10 +1094,87 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         }
     }
 
-    private static Dictionary<string, int> ProduceResources(Game game, BoardState board, int diceTotal)
+    private static void ReturnToBank(Game game, params (ResourceType Resource, int Amount)[] resources)
+    {
+        var bank = DeserializeBank(game.ResourceBankJson, game);
+        foreach (var resource in resources) bank.Add(resource.Resource, resource.Amount);
+        game.ResourceBankJson = SerializeBank(bank);
+    }
+
+    private async Task<DevelopmentCard> LoadPlayableCardAsync(Game game, string userId, Guid cardId, DevelopmentCardType type, CancellationToken cancellationToken)
+    {
+        EnsureAuthenticated(userId);
+        EnsureActiveGame(game, userId);
+        EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Development cards may only be played by the active player during turn actions.");
+        if (game.DevelopmentCardPlayedThisTurn) throw new InvalidOperationException("Only one development card may be played per turn.");
+        var card = await dbContext.DevelopmentCards.SingleOrDefaultAsync(candidate => candidate.Id == cardId && candidate.GameId == game.Id, cancellationToken)
+            ?? throw new InvalidOperationException("The development card was not found.");
+        if (card.OwnerUserId != userId || card.Type != type || card.PlayedAt is not null)
+            throw new InvalidOperationException("That development card cannot be played.");
+        if (card.PurchasedTurnNumber >= game.TurnNumber)
+            throw new InvalidOperationException("A development card cannot be played on the turn it was purchased.");
+        return card;
+    }
+
+    private static bool CanPlayDevelopmentCard(Game game, string userId, DevelopmentCard card) =>
+        game.CurrentPlayerUserId == userId && game.Phase == GamePhase.TurnActions
+        && !game.DevelopmentCardPlayedThisTurn && card.Type != DevelopmentCardType.VictoryPoint
+        && card.PlayedAt is null && card.PurchasedTurnNumber < game.TurnNumber;
+
+    private static void CompleteCardPlay(Game game, DevelopmentCard card)
+    {
+        card.PlayedAt = DateTime.UtcNow;
+        game.DevelopmentCardPlayedThisTurn = true;
+    }
+
+    private static List<DevelopmentCardType> CreateDevelopmentDeck(int playerCount)
+    {
+        var deck = new List<DevelopmentCardType>();
+        void Add(DevelopmentCardType type, int count) { for (var index = 0; index < count; index++) deck.Add(type); }
+        var extension = playerCount >= 5;
+        Add(DevelopmentCardType.Knight, extension ? 20 : 14);
+        Add(DevelopmentCardType.RoadBuilding, extension ? 3 : 2);
+        Add(DevelopmentCardType.YearOfPlenty, extension ? 3 : 2);
+        Add(DevelopmentCardType.Monopoly, extension ? 3 : 2);
+        Add(DevelopmentCardType.VictoryPoint, 5);
+        for (var index = deck.Count - 1; index > 0; index--)
+        {
+            var swap = RandomNumberGenerator.GetInt32(index + 1);
+            (deck[index], deck[swap]) = (deck[swap], deck[index]);
+        }
+        return deck;
+    }
+
+    private static ResourceBank CreateResourceBank(int playerCount)
+    {
+        var count = playerCount >= 5 ? 24 : 19;
+        return new ResourceBank { Brick = count, Lumber = count, Wool = count, Grain = count, Ore = count };
+    }
+
+    private static ResourceBank DeserializeBank(string? json, Game game)
+    {
+        if (!string.IsNullOrWhiteSpace(json)) return JsonSerializer.Deserialize<ResourceBank>(json)!;
+        var bank = CreateResourceBank(game.Players.Count);
+        foreach (var player in game.Players)
+            foreach (var resource in Enum.GetValues<ResourceType>())
+                bank.Remove(resource, Math.Min(bank.Get(resource), player.GetResource(resource)));
+        return bank;
+    }
+
+    private static string SerializeBank(ResourceBank bank) => JsonSerializer.Serialize(bank);
+    private static List<DevelopmentCardType> DeserializeDeck(string? json) =>
+        string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<List<DevelopmentCardType>>(json)!;
+    private static string SerializeDeck(List<DevelopmentCardType> deck) => JsonSerializer.Serialize(deck);
+    private static void EnsureResourceType(ResourceType resource)
+    {
+        if (!Enum.IsDefined(resource)) throw new ArgumentException("The selected resource type is invalid.");
+    }
+
+    private static Dictionary<string, int> ProduceResources(Game game, BoardState board, int diceTotal, ResourceBank bank)
     {
         var players = game.Players.ToDictionary(player => player.UserId);
         var produced = new Dictionary<string, int>();
+        var claims = new List<(string UserId, ResourceType Resource, int Amount)>();
         foreach (var hex in board.Hexes.Where(hex => hex.NumberToken == diceTotal && hex.Id != board.RobberHexId))
         {
             var resource = ResourceForTerrain(hex.Terrain);
@@ -928,8 +1185,19 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 .Where(settlement => settlement is not null))
             {
                 var amount = settlement!.ProductionAmount;
-                players[settlement.UserId].AddResource(resource.Value, amount);
-                produced[settlement.UserId] = produced.GetValueOrDefault(settlement.UserId) + amount;
+                claims.Add((settlement.UserId, resource.Value, amount));
+            }
+        }
+
+        foreach (var resourceClaims in claims.GroupBy(claim => claim.Resource))
+        {
+            var total = resourceClaims.Sum(claim => claim.Amount);
+            if (bank.Get(resourceClaims.Key) < total) continue;
+            bank.Remove(resourceClaims.Key, total);
+            foreach (var claim in resourceClaims)
+            {
+                players[claim.UserId].AddResource(claim.Resource, claim.Amount);
+                produced[claim.UserId] = produced.GetValueOrDefault(claim.UserId) + claim.Amount;
             }
         }
 

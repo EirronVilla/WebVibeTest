@@ -22,6 +22,8 @@ public sealed class GameHub(IGameService gameService) : Hub
     public const string TradeCompletedEvent = "TradeCompleted";
     public const string TradeCancelledEvent = "TradeCancelled";
     public const string MaritimeTradeCompletedEvent = "MaritimeTradeCompleted";
+    public const string DevelopmentCardBoughtEvent = "DevelopmentCardBought";
+    public const string DevelopmentCardPlayedEvent = "DevelopmentCardPlayed";
 
     public async Task JoinLobby(Guid gameId)
     {

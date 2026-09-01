@@ -472,6 +472,51 @@ public sealed class GamesController(
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { return BadRequest(exception.Message); }
     }
 
+    [HttpPost, ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuyDevelopmentCard(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await gameService.BuyDevelopmentCardAsync(CurrentUserId, id, cancellationToken);
+            await hubContext.Clients.User(result.OwnerUserId).SendAsync(GameHub.DevelopmentCardBoughtEvent,
+                new { gameId = id, result.CardId, result.Type }, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
+            await NotifyGameStateChangedAsync(id, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { return BadRequest(exception.Message); }
+    }
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public Task<IActionResult> PlayKnight(Guid id, Guid cardId, CancellationToken cancellationToken) =>
+        PlayDevelopmentCardAsync(id, () => gameService.PlayKnightAsync(CurrentUserId, id, cardId, cancellationToken), cancellationToken);
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public Task<IActionResult> PlayRoadBuilding(Guid id, Guid cardId, CancellationToken cancellationToken) =>
+        PlayDevelopmentCardAsync(id, () => gameService.PlayRoadBuildingAsync(CurrentUserId, id, cardId, cancellationToken), cancellationToken);
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public Task<IActionResult> PlayYearOfPlenty(Guid id, Guid cardId, ResourceType first, ResourceType second, CancellationToken cancellationToken) =>
+        PlayDevelopmentCardAsync(id, () => gameService.PlayYearOfPlentyAsync(CurrentUserId, id, cardId, first, second, cancellationToken), cancellationToken, true);
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public Task<IActionResult> PlayMonopoly(Guid id, Guid cardId, ResourceType resource, CancellationToken cancellationToken) =>
+        PlayDevelopmentCardAsync(id, () => gameService.PlayMonopolyAsync(CurrentUserId, id, cardId, resource, cancellationToken), cancellationToken, true);
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public async Task<IActionResult> BuildFreeRoad(Guid id, int edgeId, CancellationToken cancellationToken)
+    {
+        try { await BroadcastBuildAsync(id, await gameService.BuildFreeRoadAsync(CurrentUserId, id, edgeId, cancellationToken), cancellationToken); return Ok(); }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { return BadRequest(exception.Message); }
+    }
+
+    [HttpPost, ValidateAntiForgeryToken]
+    public async Task<IActionResult> FinishRoadBuilding(Guid id, CancellationToken cancellationToken)
+    {
+        try { await gameService.FinishRoadBuildingAsync(CurrentUserId, id, cancellationToken); await NotifyGameStateChangedAsync(id, cancellationToken); return Ok(); }
+        catch (InvalidOperationException exception) { return BadRequest(exception.Message); }
+    }
+
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Leave(Guid id, CancellationToken cancellationToken)
@@ -520,5 +565,21 @@ public sealed class GamesController(
         await hubContext.Clients.Users(result.ParticipantUserIds)
             .SendAsync(eventName, new { gameId, result.OfferId }, cancellationToken);
         await NotifyGameStateChangedAsync(gameId, cancellationToken);
+    }
+
+    private async Task<IActionResult> PlayDevelopmentCardAsync(
+        Guid gameId, Func<Task<DevelopmentCardPlayResult>> play, CancellationToken cancellationToken, bool resourcesChanged = false)
+    {
+        try
+        {
+            var result = await play();
+            var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
+            await clients.SendAsync(GameHub.DevelopmentCardPlayedEvent,
+                new { gameId, result.Type, result.PlayerUserId }, cancellationToken);
+            if (resourcesChanged) await clients.SendAsync(GameHub.ResourceCountsChangedEvent, gameId, cancellationToken);
+            await NotifyGameStateChangedAsync(gameId, cancellationToken);
+            return Ok();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { return BadRequest(exception.Message); }
     }
 }

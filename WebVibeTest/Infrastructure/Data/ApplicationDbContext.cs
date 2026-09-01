@@ -11,6 +11,7 @@ namespace WebVibeTest.Infrastructure.Data
         public DbSet<GamePlayer> GamePlayers => Set<GamePlayer>();
         public DbSet<TradeOffer> TradeOffers => Set<TradeOffer>();
         public DbSet<TradeResponse> TradeResponses => Set<TradeResponse>();
+        public DbSet<DevelopmentCard> DevelopmentCards => Set<DevelopmentCard>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {

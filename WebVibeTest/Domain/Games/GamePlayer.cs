@@ -16,6 +16,7 @@ public sealed class GamePlayer
     public int Ore { get; set; }
     public int RequiredDiscardCount { get; set; }
     public int VisibleVictoryPoints { get; set; }
+    public int KnightsPlayed { get; set; }
     public Game Game { get; set; } = null!;
 
     public int TotalResources => Brick + Lumber + Wool + Grain + Ore;

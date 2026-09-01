@@ -19,5 +19,10 @@ public sealed class Game
     public int? PendingSettlementVertexId { get; set; }
     public int? LatestDie1 { get; set; }
     public int? LatestDie2 { get; set; }
+    public string? DevelopmentDeckJson { get; set; }
+    public string? ResourceBankJson { get; set; }
+    public int TurnNumber { get; set; }
+    public bool DevelopmentCardPlayedThisTurn { get; set; }
+    public int FreeRoadsRemaining { get; set; }
     public ICollection<GamePlayer> Players { get; set; } = new List<GamePlayer>();
 }

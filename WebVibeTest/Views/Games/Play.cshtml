@@ -44,7 +44,7 @@
                                 <span class="turn-badge">Playing now</span>
                             }
                         </span>
-                        <span class="resource-total">@player.VisibleVictoryPoints VP &middot; @player.TotalResources resource cards</span>
+                        <span class="resource-total">@player.VisibleVictoryPoints VP &middot; @player.TotalResources resource cards &middot; @player.DevelopmentCardCount development cards</span>
                     </li>
                 }
             </ul>
@@ -68,6 +68,41 @@
         </div></div>
     </div>
 </div>
+
+<div class="card mb-3"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center">
+        <h2 class="h5 mb-0">Your development cards</h2>
+        <span>@Model.DevelopmentCards.DeckRemaining remaining &middot; Actual VP: @Model.DevelopmentCards.ActualVictoryPoints</span>
+    </div>
+    <div class="d-flex flex-wrap gap-3 mt-3">
+        @foreach (var card in Model.DevelopmentCards.OwnCards)
+        {
+            <div class="development-card text-center" data-card-id="@card.Id">
+                <img src="~/img/cards/development_card.png" alt="Development card" />
+                <strong class="d-block">@card.Type</strong>
+                @if (card.IsNew) { <small class="text-muted d-block">Playable next turn</small> }
+                @if (card.CanPlay)
+                {
+                    if (card.Type == DevelopmentCardType.YearOfPlenty)
+                    {
+                        <select class="form-select form-select-sm dev-first">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                        <select class="form-select form-select-sm dev-second">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                    }
+                    else if (card.Type == DevelopmentCardType.Monopoly)
+                    {
+                        <select class="form-select form-select-sm dev-resource">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                    }
+                    <button type="button" class="btn btn-sm btn-warning mt-1 play-development" data-card-type="@card.Type">Play</button>
+                }
+            </div>
+        }
+        @if (Model.DevelopmentCards.OwnCards.Count == 0) { <span class="text-muted">None yet.</span> }
+    </div>
+    @if (Model.DevelopmentCards.CanBuy)
+    {
+        <button type="button" id="buy-development" class="btn btn-outline-warning mt-3">Buy development card <small>(Ore, Wool, Grain)</small></button>
+    }
+</div></div>
 
 @if (Model.LatestDie1 is int die1 && Model.LatestDie2 is int die2)
 {
@@ -195,6 +230,11 @@
         </div>
     </div></div>
     <button type="button" id="end-turn" class="btn btn-primary mb-3">End turn</button>
+}
+
+@if (Model.IsCurrentPlayer && Model.Phase == GamePhase.AwaitingRoadBuilding)
+{
+    <div class="alert alert-warning">Place up to @Model.DevelopmentCards.FreeRoadsRemaining free roads. <button type="button" id="finish-road-building" class="btn btn-sm btn-outline-dark">Finish</button></div>
 }
 
 @if (Model.Trading.Offers.Count > 0)
@@ -328,6 +368,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         @if (Model.Construction.ValidRoadEdgeIds.Contains(edge.Id))
         {
             <line class="placement-location normal-build-location build-road-location d-none" data-build-road-edge-id="@edge.Id" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" stroke="#ffd43b" stroke-width="0.2" stroke-linecap="round" opacity="0.85" />
+        }
+        @if (Model.DevelopmentCards.ValidFreeRoadEdgeIds.Contains(edge.Id))
+        {
+            <line class="placement-location" data-free-road-edge-id="@edge.Id" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" stroke="#ff9f1c" stroke-width="0.2" stroke-linecap="round" opacity="0.9" />
         }
     }
 
@@ -469,6 +513,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         border-radius: .45rem;
         box-shadow: 0 .2rem .5rem rgba(0, 0, 0, .25);
     }
+    .development-card { width: 8rem; }
+    .development-card img { width: 100%; height: 9rem; object-fit: contain; }
 
     .resource-count {
         position: absolute;
@@ -539,6 +585,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 element.addEventListener('click', () => postCommand('@Url.Action("BuildSettlement", "Games")', { vertexId: element.dataset.buildSettlementVertexId })));
             document.querySelectorAll('[data-build-city-vertex-id]').forEach(element =>
                 element.addEventListener('click', () => postCommand('@Url.Action("BuildCity", "Games")', { vertexId: element.dataset.buildCityVertexId })));
+            document.querySelectorAll('[data-free-road-edge-id]').forEach(element =>
+                element.addEventListener('click', () => postCommand('@Url.Action("BuildFreeRoad", "Games")', { edgeId: element.dataset.freeRoadEdgeId })));
             document.querySelectorAll('[data-build-mode]').forEach(button => button.addEventListener('click', () => {
                 document.querySelectorAll('.normal-build-location').forEach(location => location.classList.add('d-none'));
                 document.querySelectorAll('[data-build-mode]').forEach(candidate => candidate.classList.remove('active'));
@@ -568,6 +616,20 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                     give: document.getElementById('maritime-give').value,
                     receive: document.getElementById('maritime-receive').value
                 }));
+            document.getElementById('buy-development')?.addEventListener('click', () => postCommand('@Url.Action("BuyDevelopmentCard", "Games")'));
+            document.getElementById('finish-road-building')?.addEventListener('click', () => postCommand('@Url.Action("FinishRoadBuilding", "Games")'));
+            document.querySelectorAll('.play-development').forEach(button => button.addEventListener('click', () => {
+                const card = button.closest('[data-card-id]');
+                const values = { cardId: card.dataset.cardId };
+                let action = `Play${button.dataset.cardType}`;
+                if (button.dataset.cardType === 'YearOfPlenty') {
+                    values.first = card.querySelector('.dev-first').value;
+                    values.second = card.querySelector('.dev-second').value;
+                } else if (button.dataset.cardType === 'Monopoly') {
+                    values.resource = card.querySelector('.dev-resource').value;
+                }
+                postCommand(`/Games/${action}`, values);
+            }));
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
             connection.on('GameStateUpdated', updatedGameId => {
