@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using WebVibeTest.Application.Games;
 using WebVibeTest.Hubs;
 using WebVibeTest.Infrastructure.Data;
 
@@ -23,6 +24,7 @@ namespace WebVibeTest
             builder.Services.AddControllersWithViews();
             builder.Services.AddRazorPages();
             builder.Services.AddSignalR();
+            builder.Services.AddScoped<IGameService, GameService>();
 
             var app = builder.Build();
 
