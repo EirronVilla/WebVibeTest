@@ -1,17 +1,9 @@
 @using System.Globalization
 @using WebVibeTest.Domain.Board
+@using WebVibeTest.Models.Games
 @model WebVibeTest.Application.Games.ActiveGameReadModel
 @functions {
     private static string F(double value) => value.ToString("0.######", CultureInfo.InvariantCulture);
-    private static string TerrainColor(TerrainType terrain) => terrain switch
-    {
-        TerrainType.Hills => "#b75d35",
-        TerrainType.Forest => "#34734a",
-        TerrainType.Mountains => "#85898d",
-        TerrainType.Fields => "#dfbd45",
-        TerrainType.Pasture => "#8ebf57",
-        _ => "#d9c58c"
-    };
 }
 @{
     ViewData["Title"] = Model.Name;
@@ -41,12 +33,46 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 <form id="anti-forgery" class="d-none">@Html.AntiForgeryToken()</form>
 
 <svg viewBox="@viewBox" style="width:100%; max-height:75vh; background:#b7dceb" aria-label="CATAN board">
+    <defs>
+        @foreach (var hex in board.Hexes)
+        {
+            var clipPoints = string.Join(" ", hex.VertexIds.Select(vertexId => $"{F(board.Vertices[vertexId].X)},{F(board.Vertices[vertexId].Y)}"));
+            <clipPath id="hex-clip-@hex.Id">
+                <polygon points="@clipPoints" />
+            </clipPath>
+        }
+    </defs>
+
+    <g id="terrain-tiles">
+        @foreach (var hex in board.Hexes)
+        {
+            var points = string.Join(" ", hex.VertexIds.Select(vertexId => $"{F(board.Vertices[vertexId].X)},{F(board.Vertices[vertexId].Y)}"));
+            var tileVertices = hex.VertexIds.Select(vertexId => board.Vertices[vertexId]).ToList();
+            var tileMinX = tileVertices.Min(vertex => vertex.X);
+            var tileMaxX = tileVertices.Max(vertex => vertex.X);
+            var tileMinY = tileVertices.Min(vertex => vertex.Y);
+            var tileMaxY = tileVertices.Max(vertex => vertex.Y);
+            var tileCenterX = (tileMinX + tileMaxX) / 2;
+            var tileCenterY = (tileMinY + tileMaxY) / 2;
+            var imagePath = Url.Content(TerrainImageMap.GetPath(hex.Terrain));
+            <g clip-path="url(#hex-clip-@hex.Id)">
+                <image href="@imagePath"
+                       x="@F(tileMinX)"
+                       y="@F(tileMinY)"
+                       width="@F(tileMaxX - tileMinX)"
+                       height="@F(tileMaxY - tileMinY)"
+                       preserveAspectRatio="xMidYMid slice"
+                       transform="rotate(30 @F(tileCenterX) @F(tileCenterY))" />
+            </g>
+            <polygon points="@points" fill="none" stroke="#f3e6bd" stroke-width="0.08" />
+        }
+    </g>
+
+    <g id="number-tokens-and-robber">
     @foreach (var hex in board.Hexes)
     {
-        var points = string.Join(" ", hex.VertexIds.Select(vertexId => $"{F(board.Vertices[vertexId].X)},{F(board.Vertices[vertexId].Y)}"));
         var centerX = hex.VertexIds.Average(vertexId => board.Vertices[vertexId].X);
         var centerY = hex.VertexIds.Average(vertexId => board.Vertices[vertexId].Y);
-        <polygon points="@points" fill="@TerrainColor(hex.Terrain)" stroke="#f3e6bd" stroke-width="0.08" />
         @if (hex.NumberToken is int token)
         {
             <circle cx="@F(centerX)" cy="@F(centerY)" r="0.28" fill="#f4e8c1" stroke="#5f4b32" stroke-width="0.03" />
@@ -57,6 +83,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             <circle cx="@F(centerX)" cy="@F(centerY)" r="0.16" fill="#222" />
         }
     }
+    </g>
 
     @foreach (var edge in board.Edges)
     {
