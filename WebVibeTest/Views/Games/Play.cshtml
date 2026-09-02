@@ -29,6 +29,11 @@
 
 <h1>@Model.Name</h1>
 <p><strong>Phase:</strong> @Model.Phase &middot; <strong>Current player:</strong> @currentPlayerShortName</p>
+@if (Model.PairedTurn.PrimaryPlayerUserId is not null && Model.Players.Count >= 5)
+{
+    var primaryName = Model.Players.FirstOrDefault(p => p.UserId == Model.PairedTurn.PrimaryPlayerUserId)?.DisplayName?.Split('@')[0] ?? "Unknown";
+    <div class="alert alert-info py-2"><strong>Primary turn:</strong> @primaryName &middot; <strong>Action phase:</strong> @(Model.PairedTurn.IsSecondaryActionPhase ? "Player 2 (paired action)" : "Player 1 (production + actions)") &middot; <strong>May act:</strong> @currentPlayerShortName</div>
+}
 
 <section class="renaissance-panel player-roster mb-3" aria-label="Players">
     <div class="player-roster-grid">

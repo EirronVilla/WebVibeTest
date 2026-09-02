@@ -237,6 +237,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         game.Status = GameStatus.InProgress;
         game.Phase = GamePhase.InitialPlacementForward;
         game.CurrentPlayerUserId = orderedPlayers[0].UserId;
+        game.PrimaryPlayerUserId = orderedPlayers[0].UserId;
+        game.SecondaryPlayerUserId = null;
+        game.IsSecondaryActionPhase = false;
         game.PendingSettlementVertexId = null;
         game.DevelopmentDeckJson = SerializeDeck(CreateDevelopmentDeck(game.Players.Count));
         game.ResourceBankJson = SerializeBank(CreateResourceBank(game.Players.Count));
@@ -378,6 +381,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 game.LongestRoadLength,
                 game.LargestArmyHolderUserId,
                 game.LargestArmyHolderUserId is null ? null : awardNames.GetValueOrDefault(game.LargestArmyHolderUserId)),
+            new PairedTurnReadModel(game.PrimaryPlayerUserId, game.SecondaryPlayerUserId, game.IsSecondaryActionPhase, game.CurrentPlayerUserId),
             new DevelopmentCardsReadModel(
                 cards.Where(card => card.OwnerUserId == userId)
                     .OrderBy(card => card.PurchasedAt)
@@ -516,6 +520,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnProduction, "Dice may only be rolled once at the start of the active player's turn.");
+        if (game.Players.Count >= 5 && game.CurrentPlayerUserId != game.PrimaryPlayerUserId) throw new InvalidOperationException("The secondary player does not roll dice.");
 
         var die1 = RandomNumberGenerator.GetInt32(1, 7);
         var die2 = RandomNumberGenerator.GetInt32(1, 7);
@@ -650,6 +655,19 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "The turn cannot end before production and robber resolution are complete.");
         var players = game.Players.OrderBy(player => player.TurnOrder).ToList();
+        game.PrimaryPlayerUserId ??= game.CurrentPlayerUserId;
+        if (players.Count >= 5 && !game.IsSecondaryActionPhase)
+        {
+            var primaryIndex = players.FindIndex(player => player.UserId == userId);
+            var secondary = players[(primaryIndex + 3) % players.Count];
+            game.SecondaryPlayerUserId = secondary.UserId;
+            game.CurrentPlayerUserId = secondary.UserId;
+            game.IsSecondaryActionPhase = true;
+            game.Phase = GamePhase.TurnActions;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new TurnChangeResult(secondary.UserId, []);
+        }
         var currentIndex = players.FindIndex(player => player.UserId == userId);
         var nextPlayer = players[(currentIndex + 1) % players.Count];
         var openOffers = await dbContext.TradeOffers
@@ -657,6 +675,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .ToListAsync(cancellationToken);
         foreach (var offer in openOffers) offer.Status = TradeStatus.Cancelled;
         game.CurrentPlayerUserId = nextPlayer.UserId;
+        game.PrimaryPlayerUserId = nextPlayer.UserId;
+        game.SecondaryPlayerUserId = null;
+        game.IsSecondaryActionPhase = false;
         game.Phase = GamePhase.TurnProduction;
         game.TurnNumber += 1;
         game.DevelopmentCardPlayedThisTurn = false;
@@ -916,6 +937,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Trades may only be proposed by the active player during turn actions.");
+        if (game.Players.Count >= 5 && game.IsSecondaryActionPhase) throw new InvalidOperationException("The secondary action player may not propose player-to-player trades.");
         var proposer = game.Players.Single(player => player.UserId == userId);
         EnsureBundleOwned(proposer, offered);
         var opponents = game.Players.Where(player => player.UserId != userId).ToList();
@@ -947,6 +969,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         EnsureActiveGame(game, userId);
         if (game.Phase != GamePhase.TurnActions || game.CurrentPlayerUserId is null)
             throw new InvalidOperationException("Trades cannot be answered outside the active player's action phase.");
+        if (game.Players.Count >= 5 && game.IsSecondaryActionPhase) throw new InvalidOperationException("Player-to-player trades are unavailable during the paired action phase.");
         var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
         if (offer.ProposerUserId == userId) throw new InvalidOperationException("A player cannot respond to their own trade.");
         if (offer.ProposerUserId != game.CurrentPlayerUserId)

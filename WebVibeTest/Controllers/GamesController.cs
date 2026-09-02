@@ -342,6 +342,7 @@ public sealed class GamesController(
             foreach (var offerId in result.CancelledTradeOfferIds)
                 await clients.SendAsync(GameHub.TradeCancelledEvent, new { gameId = id, offerId }, cancellationToken);
             await clients.SendAsync(GameHub.TurnChangedEvent, new { gameId = id, result.CurrentPlayerUserId }, cancellationToken);
+            await clients.SendAsync(GameHub.PairedTurnChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
             return Ok();
         }

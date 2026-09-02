@@ -16,6 +16,9 @@ public sealed class Game
     public string? BoardStateJson { get; set; }
     public GamePhase? Phase { get; set; }
     public string? CurrentPlayerUserId { get; set; }
+    public string? PrimaryPlayerUserId { get; set; }
+    public string? SecondaryPlayerUserId { get; set; }
+    public bool IsSecondaryActionPhase { get; set; }
     public int? PendingSettlementVertexId { get; set; }
     public int? LatestDie1 { get; set; }
     public int? LatestDie2 { get; set; }
