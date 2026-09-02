@@ -72,7 +72,7 @@ public sealed record ResourceDiscard(int Brick, int Lumber, int Wool, int Grain,
     public int Total => Brick + Lumber + Wool + Grain + Ore;
 }
 
-public sealed record ProductionSummary(string UserId, int CardsProduced);
+public sealed record ProductionSummary(string UserId, int CardsProduced, ResourceInventory Resources);
 public sealed record DiceRollResult(int Die1, int Die2, IReadOnlyList<ProductionSummary> Production, bool RequiresDiscards);
 public sealed record RobberMoveResult(int HexId, bool RequiresTarget);
 public sealed record RobberyResult(string TargetUserId);

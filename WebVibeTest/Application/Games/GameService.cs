@@ -582,7 +582,15 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
             var bank = DeserializeBank(game.ResourceBankJson, game);
             var produced = ProduceResources(game, DeserializeBoard(game.BoardStateJson!), total, bank);
             game.ResourceBankJson = SerializeBank(bank);
-            production.AddRange(produced.Select(item => new ProductionSummary(item.Key, item.Value)));
+            production.AddRange(produced.Select(item => new ProductionSummary(
+                item.Key,
+                item.Value.Values.Sum(),
+                new ResourceInventory(
+                    item.Value.GetValueOrDefault(ResourceType.Brick),
+                    item.Value.GetValueOrDefault(ResourceType.Lumber),
+                    item.Value.GetValueOrDefault(ResourceType.Wool),
+                    item.Value.GetValueOrDefault(ResourceType.Grain),
+                    item.Value.GetValueOrDefault(ResourceType.Ore)))));
             game.Phase = GamePhase.TurnActions;
         }
 
@@ -1382,10 +1390,10 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         if (!Enum.IsDefined(resource)) throw new ArgumentException("The selected resource type is invalid.");
     }
 
-    private static Dictionary<string, int> ProduceResources(Game game, BoardState board, int diceTotal, ResourceBank bank)
+    private static Dictionary<string, Dictionary<ResourceType, int>> ProduceResources(Game game, BoardState board, int diceTotal, ResourceBank bank)
     {
         var players = game.Players.ToDictionary(player => player.UserId);
-        var produced = new Dictionary<string, int>();
+        var produced = new Dictionary<string, Dictionary<ResourceType, int>>();
         var claims = new List<(string UserId, ResourceType Resource, int Amount)>();
         foreach (var hex in board.Hexes.Where(hex => hex.NumberToken == diceTotal && hex.Id != board.RobberHexId))
         {
@@ -1409,7 +1417,12 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
             foreach (var claim in resourceClaims)
             {
                 players[claim.UserId].AddResource(claim.Resource, claim.Amount);
-                produced[claim.UserId] = produced.GetValueOrDefault(claim.UserId) + claim.Amount;
+                if (!produced.TryGetValue(claim.UserId, out var playerProduction))
+                {
+                    playerProduction = new Dictionary<ResourceType, int>();
+                    produced[claim.UserId] = playerProduction;
+                }
+                playerProduction[claim.Resource] = playerProduction.GetValueOrDefault(claim.Resource) + claim.Amount;
             }
         }
 

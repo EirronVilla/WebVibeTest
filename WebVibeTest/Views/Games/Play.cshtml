@@ -358,7 +358,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                        preserveAspectRatio="xMidYMid slice"
                        transform="rotate(30 @F(tileCenterX) @F(tileCenterY))" />
             </g>
-            <polygon points="@points" fill="none" stroke="#f3e6bd" stroke-width="0.08" />
+            <polygon class="terrain-tile-outline" data-production-number="@hex.NumberToken" data-robber-blocked="@(hex.Id == board.RobberHexId ? "true" : "false")"
+                     points="@points" fill="none" stroke="#f3e6bd" stroke-width="0.08" />
         }
     </g>
 
@@ -503,7 +504,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         <div class="resource-hand">
             @foreach (var resource in Enum.GetValues<ResourceType>())
             {
-                <div class="resource-card" title="@resource: @Model.OwnResources.Get(resource)">
+                <div class="resource-card" data-resource="@resource" title="@resource: @Model.OwnResources.Get(resource)">
                     <div class="resource-card-art"><img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" /><span class="resource-count">@Model.OwnResources.Get(resource)</span></div>
                     <span class="resource-name">@resource</span>
                 </div>
@@ -741,6 +742,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const gameId = "@Model.Id";
             const currentUserId = "@User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value";
             const ownResources = { Brick: @Model.OwnResources.Brick, Lumber: @Model.OwnResources.Lumber, Wool: @Model.OwnResources.Wool, Grain: @Model.OwnResources.Grain, Ore: @Model.OwnResources.Ore };
+            const productionTileKey = `catan-production-tiles:${gameId}`;
+            const productionResourceKey = `catan-production-resources:${gameId}:${currentUserId}`;
             const token = document.querySelector('#anti-forgery input').value;
             const errorBox = document.getElementById('placement-error');
             let submitting = false;
@@ -759,6 +762,22 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 const host = document.getElementById(elementId);
                 host.innerHTML = Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `<div class="trade-card"><img src="/img/cards/${cardImages[resource]}" alt="${resource}" /><span>${amount}</span></div>`).join('');
             };
+
+            const restoreProductionAnimations = () => {
+                const diceTotal = Number(sessionStorage.getItem(productionTileKey));
+                sessionStorage.removeItem(productionTileKey);
+                if (diceTotal > 0 && diceTotal !== 7) {
+                    document.querySelectorAll(`.terrain-tile-outline[data-production-number="${diceTotal}"][data-robber-blocked="false"]`)
+                        .forEach(tile => tile.classList.add('production-hit'));
+                }
+
+                let receivedResources = [];
+                try { receivedResources = JSON.parse(sessionStorage.getItem(productionResourceKey) || '[]'); } catch { }
+                sessionStorage.removeItem(productionResourceKey);
+                receivedResources.forEach(resource =>
+                    document.querySelector(`.resource-card[data-resource="${resource}"]`)?.classList.add('resource-received'));
+            };
+            window.requestAnimationFrame(restoreProductionAnimations);
 
             const postCommand = async (url, values = {}, commandErrorBox = errorBox) => {
                 if (submitting) return false;
@@ -916,6 +935,17 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const actionLogList = document.getElementById('action-log-list');
             const scrollActionLogToEnd = () => { if (actionLogList) actionLogList.scrollTop = actionLogList.scrollHeight; };
             scrollActionLogToEnd();
+            connection.on('DiceRolled', event => {
+                if (event.gameId.toLowerCase() !== gameId.toLowerCase()) return;
+                sessionStorage.setItem(productionTileKey, String(event.die1 + event.die2));
+            });
+            connection.on('ResourceCardsReceived', event => {
+                if (event.gameId.toLowerCase() !== gameId.toLowerCase()) return;
+                const receivedResources = Object.entries(event.resources || {})
+                    .filter(([, amount]) => Number(amount) > 0)
+                    .map(([resource]) => resource[0].toUpperCase() + resource.slice(1));
+                sessionStorage.setItem(productionResourceKey, JSON.stringify(receivedResources));
+            });
             connection.on('ActionLogEntryAdded', entry => {
                 if (!actionLogList) return;
                 const wasNearEnd = actionLogList.scrollHeight - actionLogList.clientHeight - actionLogList.scrollTop < 36;

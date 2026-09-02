@@ -292,7 +292,21 @@ public sealed class GamesController(
             await clients.SendAsync(GameHub.DiceRolledEvent, new { gameId = id, result.Die1, result.Die2 }, cancellationToken);
             if (result.Production.Count > 0)
             {
-                await clients.SendAsync(GameHub.ResourceProductionEvent, new { gameId = id, result.Production }, cancellationToken);
+                await clients.SendAsync(
+                    GameHub.ResourceProductionEvent,
+                    new
+                    {
+                        gameId = id,
+                        Production = result.Production.Select(item => new { item.UserId, item.CardsProduced })
+                    },
+                    cancellationToken);
+                foreach (var production in result.Production)
+                {
+                    await hubContext.Clients.User(production.UserId).SendAsync(
+                        GameHub.ResourceCardsReceivedEvent,
+                        new { gameId = id, production.Resources },
+                        cancellationToken);
+                }
             }
             await clients.SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);

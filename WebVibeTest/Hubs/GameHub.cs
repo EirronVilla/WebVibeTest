@@ -13,6 +13,7 @@ public sealed class GameHub(IGameService gameService) : Hub
     public const string GameStateUpdatedEvent = "GameStateUpdated";
     public const string DiceRolledEvent = "DiceRolled";
     public const string ResourceProductionEvent = "ResourceProduction";
+    public const string ResourceCardsReceivedEvent = "ResourceCardsReceived";
     public const string ResourceCountsChangedEvent = "ResourceCountsChanged";
     public const string RobberMovedEvent = "RobberMoved";
     public const string TurnChangedEvent = "TurnChanged";
