@@ -14,7 +14,6 @@ public sealed class GamePlayerConfiguration : IEntityTypeConfiguration<GamePlaye
         builder.Ignore(player => player.TotalResources);
         builder.HasIndex(player => new { player.GameId, player.UserId }).IsUnique();
         builder.HasIndex(player => new { player.GameId, player.TurnOrder }).IsUnique();
-        builder.HasIndex(player => new { player.GameId, player.Color }).IsUnique();
 
         builder.HasOne<IdentityUser>()
             .WithMany()

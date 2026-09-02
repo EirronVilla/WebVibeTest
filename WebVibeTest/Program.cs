@@ -41,6 +41,9 @@ namespace WebVibeTest
             }
 
             app.UseHttpsRedirection();
+            // Profile portraits are uploaded at runtime and are not part of the
+            // build-time static-asset manifest handled by MapStaticAssets.
+            app.UseStaticFiles();
             app.UseRouting();
 
             app.UseAuthentication();

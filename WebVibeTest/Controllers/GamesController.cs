@@ -130,6 +130,12 @@ public sealed class GamesController(
             TempData["Error"] = exception.Message;
             return RedirectToAction(nameof(Index));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // SignalR can cause the browser to replace this request while the
+            // lobby is being refreshed. An abandoned read is not an app error.
+            return new EmptyResult();
+        }
 
         var model = new LobbyViewModel
         {
@@ -141,6 +147,7 @@ public sealed class GamesController(
             JoinCode = lobby.JoinCode,
             IsCurrentUserHost = lobby.IsCurrentUserHost,
             CanStart = lobby.CanStart,
+            ColorsAreUnique = lobby.ColorsAreUnique,
             Players = lobby.Players
                 .Select(player => new LobbyPlayerViewModel
                 {
@@ -153,6 +160,27 @@ public sealed class GamesController(
         };
 
         return View(model);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SelectColor(Guid id, PlayerColor color, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.SelectPlayerColorAsync(CurrentUserId, id, color, cancellationToken);
+            await NotifyLobbyChangedAsync(id, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            TempData["Error"] = exception.Message;
+        }
+
+        return RedirectToAction(nameof(Lobby), new { id });
     }
 
     [HttpPost]
@@ -415,7 +443,15 @@ public sealed class GamesController(
                 new ResourceBundle(offeredBrick, offeredLumber, offeredWool, offeredGrain, offeredOre),
                 new ResourceBundle(requestedBrick, requestedLumber, requestedWool, requestedGrain, requestedOre),
                 cancellationToken);
-            await SendTradeEventAsync(GameHub.TradeOfferedEvent, id, result, cancellationToken);
+            await hubContext.Clients.Users(result.ParticipantUserIds).SendAsync(GameHub.TradeOfferedEvent, new
+            {
+                gameId = id,
+                offerId = result.OfferId,
+                proposerUserId = CurrentUserId,
+                offered = new { brick = offeredBrick, lumber = offeredLumber, wool = offeredWool, grain = offeredGrain, ore = offeredOre },
+                requested = new { brick = requestedBrick, lumber = requestedLumber, wool = requestedWool, grain = requestedGrain, ore = requestedOre }
+            }, cancellationToken);
+            await hubContext.Clients.User(CurrentUserId).SendAsync(GameHub.GameStateUpdatedEvent, id, cancellationToken);
             return Ok();
         }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
@@ -431,7 +467,17 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.RespondToTradeAsync(CurrentUserId, id, offerId, accept, cancellationToken);
-            await SendTradeEventAsync(GameHub.TradeRespondedEvent, id, result, cancellationToken);
+            if (result.AllRejected)
+                if (result.ProposerUserId is not null)
+                    await hubContext.Clients.User(result.ProposerUserId).SendAsync(GameHub.TradeAllRejectedEvent, new { gameId = id, offerId }, cancellationToken);
+            if (result.AllResponded && result.AcceptedUserIds?.Count > 0 && result.ProposerUserId is not null)
+            {
+                var acceptedNames = new Dictionary<string, string>();
+                foreach (var acceptedId in result.AcceptedUserIds)
+                    acceptedNames[acceptedId] = await userManager.GetUserNameAsync(await userManager.FindByIdAsync(acceptedId) ?? new IdentityUser { Id = acceptedId }) ?? acceptedId;
+                await hubContext.Clients.User(result.ProposerUserId).SendAsync(GameHub.TradeReadyEvent, new { gameId = id, offerId, acceptedUserIds = result.AcceptedUserIds, acceptedNames }, cancellationToken);
+            }
+            await hubContext.Clients.Users(result.ParticipantUserIds).SendAsync(GameHub.TradeRespondedEvent, new { gameId = id, result.OfferId, accept }, cancellationToken);
             return Ok();
         }
         catch (UnauthorizedAccessException) { return Forbid(); }

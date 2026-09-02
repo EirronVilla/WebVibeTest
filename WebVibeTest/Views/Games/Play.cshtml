@@ -72,6 +72,7 @@
 
 <section class="action-ribbon mb-3">
     <div class="action-ribbon-left">
+        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#buy-development-modal" @(Model.DevelopmentCards.CanBuy ? null : "disabled")>Buy Development Card</button>
         <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#build-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Build</button>
         <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#player-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Trade with players</button>
         <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#maritime-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Maritime Trade</button>
@@ -173,7 +174,7 @@
                 <div class="row g-1">
                     @foreach (var resource in Enum.GetValues<ResourceType>())
                     {
-                        <div class="col"><label class="small">@resource</label><input type="number" min="0" value="0" class="form-control form-control-sm" name="offered@resource" /></div>
+                        <div class="col"><label class="small">@resource</label><input type="number" min="0" max="@Model.OwnResources.Get(resource)" value="0" class="form-control form-control-sm trade-offered-input" data-resource="@resource" name="offered@resource" /></div>
                     }
                 </div>
             </div>
@@ -182,12 +183,12 @@
                 <div class="row g-1">
                     @foreach (var resource in Enum.GetValues<ResourceType>())
                     {
-                        <div class="col"><label class="small">@resource</label><input type="number" min="0" value="0" class="form-control form-control-sm" name="requested@resource" /></div>
+                        <div class="col"><label class="small">@resource</label><input type="number" min="0" value="0" class="form-control form-control-sm trade-requested-input" data-resource="@resource" name="requested@resource" /></div>
                     }
                 </div>
             </div>
         </div>
-        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="propose-trade" class="btn btn-success">Propose to all players</button></div>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="propose-trade" class="btn btn-success" @(Model.Trading.OffersRemainingThisTurn > 0 ? null : "disabled")>Make offer to all players <small>(@Model.Trading.OffersRemainingThisTurn remaining)</small></button></div>
     </div></div></div>
 
     <div class="modal fade renaissance-modal" id="maritime-trade-modal" tabindex="-1" aria-labelledby="maritime-trade-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
@@ -213,42 +214,6 @@
     <div class="alert alert-warning">Place up to @Model.DevelopmentCards.FreeRoadsRemaining free roads. <button type="button" id="finish-road-building" class="btn btn-sm btn-outline-dark">Finish</button></div>
 }
 
-@if (Model.Trading.Offers.Count > 0)
-{
-    <div class="card mb-3"><div class="card-body">
-        <h2 class="h5">Open trade offers</h2>
-        @foreach (var offer in Model.Trading.Offers)
-        {
-            <div class="border rounded p-2 mb-2">
-                <strong>@offer.ProposerName offers:</strong> @BundleText(offer.Offered)<br />
-                <strong>For:</strong> @BundleText(offer.Requested)
-                @if (offer.IsProposer)
-                {
-                    <div class="mt-2">
-                        @foreach (var response in offer.Responses)
-                        {
-                            <span class="me-2">@response.DisplayName: @response.Status</span>
-                            @if (response.Status == TradeResponseStatus.Accepted)
-                            {
-                                <button type="button" class="btn btn-sm btn-success finalize-trade" data-offer-id="@offer.Id" data-accepting-user-id="@response.UserId">Finalize</button>
-                            }
-                        }
-                        <button type="button" class="btn btn-sm btn-outline-danger cancel-trade" data-offer-id="@offer.Id">Cancel</button>
-                    </div>
-                }
-                else
-                {
-                    <div class="mt-2">
-                        <span class="me-2">Your response: @offer.OwnResponse</span>
-                        <button type="button" class="btn btn-sm btn-success respond-trade" data-offer-id="@offer.Id" data-accept="true">Accept</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger respond-trade" data-offer-id="@offer.Id" data-accept="false">Reject</button>
-                    </div>
-                }
-            </div>
-        }
-    </div></div>
-}
-
 @if (Model.IsCurrentPlayer && Model.Phase is WebVibeTest.Domain.Games.GamePhase.InitialPlacementForward or WebVibeTest.Domain.Games.GamePhase.InitialPlacementReverse)
 {
     <div class="alert alert-info">
@@ -262,6 +227,36 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 
 <div id="placement-error" class="alert alert-danger d-none" role="alert"></div>
 <form id="anti-forgery" class="d-none">@Html.AntiForgeryToken()</form>
+
+<div class="modal fade renaissance-modal" id="buy-development-modal" tabindex="-1" aria-labelledby="buy-development-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="buy-development-title">Buy Development Card</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body text-center">
+            <img src="~/img/cards/development_card.png" alt="Development card" style="width:110px;height:155px;object-fit:contain" />
+            <p class="mt-3 mb-1">Spend <strong>1 Ore, 1 Wool, and 1 Grain</strong> to draw one random development card?</p>
+            <small class="text-muted">The card identity will remain private to you.</small>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="confirm-buy-development" class="btn btn-warning">Confirm purchase</button></div>
+    </div></div>
+</div>
+
+<div class="modal fade" id="incoming-trade-modal" tabindex="-1" aria-labelledby="incoming-trade-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="incoming-trade-title">New trade offer</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+            <div class="trade-visual-columns"><div><h3 class="trade-direction">YOU GIVE</h3><div id="incoming-trade-give" class="trade-card-row"></div></div><div><h3 class="trade-direction">YOU RECEIVE</h3><div id="incoming-trade-receive" class="trade-card-row"></div></div></div>
+            <p id="incoming-trade-summary" class="small text-muted mt-3"></p><div id="incoming-trade-capability" class="small"></div>
+        </div>
+        <div class="modal-footer"><button type="button" class="btn btn-outline-danger incoming-trade-response" data-accept="false">Reject</button><button type="button" class="btn btn-success incoming-trade-response" data-accept="true">Accept</button></div>
+    </div></div>
+</div>
+
+<div class="modal fade" id="trade-rejected-modal" tabindex="-1" aria-labelledby="trade-rejected-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-5" id="trade-rejected-title">Trade update</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">All players have rejected the trade offer.</div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div></div></div>
+</div>
+<div class="modal fade" id="trade-ready-modal" tabindex="-1" aria-labelledby="trade-ready-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-5" id="trade-ready-title">Choose a trade to finalize</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p>All players have responded. Select one accepted player to exchange resources with.</p><select id="trade-ready-partner" class="form-select"></select></div><div class="modal-footer"><button type="button" id="cancel-ready-trade" class="btn btn-outline-danger">Cancel trade</button><button type="button" id="finalize-ready-trade" class="btn btn-success">Accept selected trade</button></div></div></div>
+</div>
 
 <div class="modal fade" id="placement-confirmation-modal" tabindex="-1" aria-labelledby="placement-confirmation-title" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -333,8 +328,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         var centerY = hex.VertexIds.Average(vertexId => board.Vertices[vertexId].Y);
         @if (hex.NumberToken is int token)
         {
-            <circle cx="@F(centerX)" cy="@F(centerY)" r="0.28" fill="#f4e8c1" stroke="#5f4b32" stroke-width="0.03" />
-            <text><tspan x="@F(centerX)" y="@F(centerY + 0.1)" text-anchor="middle" font-size="0.3" font-weight="bold" fill="@(token is 6 or 8 ? "#b00020" : "#222")">@token</tspan></text>
+            <g class="number-token" aria-label="Production number @token">
+                <circle cx="@F(centerX)" cy="@F(centerY)" r="0.3" fill="#f4e8c1" stroke="#5f4b32" stroke-width="0.035" />
+                <text x="@F(centerX)" y="@F(centerY - 0.04)" text-anchor="middle" dominant-baseline="middle" font-size="0.34" font-family="Georgia,serif" font-weight="800" fill="@(token is 6 or 8 ? "#b00020" : "#222")">@token</text>
+            </g>
         }
         @if (hex.Id == board.RobberHexId)
         {
@@ -485,10 +482,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 @if (Model.DevelopmentCards.OwnCards.Count == 0) { <span class="text-muted">You have no development cards.</span> }
             </div>
         </div>
-        <div class="modal-footer">
-            @if (Model.DevelopmentCards.CanBuy) { <button type="button" id="buy-development" class="btn btn-warning">Buy card <small>(Ore, Wool, Grain)</small></button> }
-            <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
     </div></div>
 </div>
 
@@ -526,12 +520,19 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     .renaissance-button { border: 1px solid #694d18; color: #fff8df; background: linear-gradient(#926a27, #60420f); }
     .renaissance-button:hover { color: white; background: linear-gradient(#a77b31, #755117); }
     .die-face { display: inline-grid; width: 2.35rem; height: 2.35rem; place-items: center; border: 2px solid #654a1c; border-radius: .35rem; background: #fffdf4; font: 700 1.25rem Georgia,serif; }
+    .number-token { pointer-events: none; }
     .player-hand-section { display: grid; grid-template-columns: 1fr minmax(150px, 210px); gap: 1rem; padding: 1rem; }
     .development-stack { padding: .6rem; border: 1px solid #72551d; border-radius: .5rem; color: #34230e; background: rgba(255,255,255,.42); }
     .development-stack img { display: block; width: 85px; height: 115px; margin: 0 auto .4rem; object-fit: contain; }
     .development-stack span, .development-stack small { display: block; }
     .renaissance-modal .modal-content { border: 2px solid #765719; background: #fff9e9; box-shadow: inset 0 0 0 4px #e4ca8e; }
     .renaissance-modal .modal-header { border-bottom-color: #b89a5d; background: linear-gradient(90deg,#ead5a4,#fff8e6); font-family: Georgia,"Times New Roman",serif; }
+    .trade-visual-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .trade-direction { margin-bottom: .45rem; color: #60420f; font: 800 1rem Georgia,serif; letter-spacing: .08em; text-align: center; }
+    .trade-card-row { display: flex; flex-wrap: wrap; justify-content: center; gap: .45rem; min-height: 86px; }
+    .trade-card { position: relative; width: 52px; }
+    .trade-card img { display: block; width: 52px; height: 74px; object-fit: cover; border-radius: .25rem; box-shadow: 0 .15rem .3rem rgba(0,0,0,.25); }
+    .trade-card span { position: absolute; right: -4px; bottom: -4px; min-width: 1.3rem; padding: .08rem .2rem; border: 1px solid #694d18; border-radius: 999px; color: white; background: #60420f; font-weight: 700; text-align: center; }
     .board-heading { margin: .75rem 0 .35rem; color: #553b14; font: 700 1.35rem Georgia,"Times New Roman",serif; letter-spacing: .04em; }
     .awards-banner { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem; padding: .45rem .7rem; border: 1px solid #96702b; border-radius: .4rem; color: #4a3211; background: #f8eac4; font-family: Georgia,"Times New Roman",serif; }
     @@media (max-width: 767px) {
@@ -661,6 +662,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     <script>
         (() => {
             const gameId = "@Model.Id";
+            const currentUserId = "@User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value";
+            const ownResources = { Brick: @Model.OwnResources.Brick, Lumber: @Model.OwnResources.Lumber, Wool: @Model.OwnResources.Wool, Grain: @Model.OwnResources.Grain, Ore: @Model.OwnResources.Ore };
             const token = document.querySelector('#anti-forgery input').value;
             const errorBox = document.getElementById('placement-error');
             let submitting = false;
@@ -669,6 +672,16 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const placementModalElement = document.getElementById('placement-confirmation-modal');
             const placementModal = bootstrap.Modal.getOrCreateInstance(placementModalElement);
             const placementPieceName = document.getElementById('placement-piece-name');
+            const incomingTradeModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('incoming-trade-modal'));
+            let incomingOfferId = null;
+            let readyOfferId = null;
+            const tradeText = bundle => Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `${amount} ${resource}`).join(', ');
+            const canAffordRequested = bundle => Object.entries(bundle).every(([resource, amount]) => ownResources[resource[0].toUpperCase() + resource.slice(1)] >= amount);
+            const cardImages = { brick: 'brick_card.png', lumber: 'wood_card.png', wool: 'sheep_card.png', grain: 'wheat_card.png', ore: 'rock_card.png' };
+            const renderTradeCards = (elementId, bundle) => {
+                const host = document.getElementById(elementId);
+                host.innerHTML = Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `<div class="trade-card"><img src="/img/cards/${cardImages[resource]}" alt="${resource}" /><span>${amount}</span></div>`).join('');
+            };
 
             const postCommand = async (url, values = {}) => {
                 if (submitting) return;
@@ -732,8 +745,16 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 postCommand('@Url.Action("Discard", "Games")', values);
             });
             document.getElementById('propose-trade')?.addEventListener('click', () => {
-                const values = {};
-                document.querySelectorAll('#trade-proposal input').forEach(input => values[input.name] = input.value);
+                const values = { offeredBrick: 0, offeredLumber: 0, offeredWool: 0, offeredGrain: 0, offeredOre: 0, requestedBrick: 0, requestedLumber: 0, requestedWool: 0, requestedGrain: 0, requestedOre: 0 };
+                document.querySelectorAll('.trade-offered-input').forEach(input => values[`offered${input.dataset.resource}`] = input.value || 0);
+                document.querySelectorAll('.trade-requested-input').forEach(input => values[`requested${input.dataset.resource}`] = input.value || 0);
+                const offeredTotal = Object.keys(values).filter(key => key.startsWith('offered')).reduce((sum, key) => sum + Number(values[key]), 0);
+                const requestedTotal = Object.keys(values).filter(key => key.startsWith('requested')).reduce((sum, key) => sum + Number(values[key]), 0);
+                if (offeredTotal < 1 || requestedTotal < 1) {
+                    errorBox.textContent = 'Choose at least one resource to offer and one to request.';
+                    errorBox.classList.remove('d-none');
+                    return;
+                }
                 postCommand('@Url.Action("ProposeTrade", "Games")', values);
             });
             document.querySelectorAll('.respond-trade').forEach(button => button.addEventListener('click', () =>
@@ -747,7 +768,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                     give: document.getElementById('maritime-give').value,
                     receive: document.getElementById('maritime-receive').value
                 }));
-            document.getElementById('buy-development')?.addEventListener('click', () => postCommand('@Url.Action("BuyDevelopmentCard", "Games")'));
+            document.getElementById('confirm-buy-development')?.addEventListener('click', () => {
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('buy-development-modal')).hide();
+                postCommand('@Url.Action("BuyDevelopmentCard", "Games")');
+            });
             document.getElementById('finish-road-building')?.addEventListener('click', () => postCommand('@Url.Action("FinishRoadBuilding", "Games")'));
             document.querySelectorAll('.play-development').forEach(button => button.addEventListener('click', () => {
                 const card = button.closest('[data-card-id]');
@@ -763,6 +787,41 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             }));
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
+            connection.on('TradeOffered', offer => {
+                if (offer.gameId.toLowerCase() !== gameId.toLowerCase() || offer.proposerUserId === currentUserId) return;
+                incomingOfferId = offer.offerId;
+                document.getElementById('incoming-trade-summary').textContent = `You give: ${tradeText(offer.requested)} · You receive: ${tradeText(offer.offered)}`;
+                renderTradeCards('incoming-trade-give', offer.requested);
+                renderTradeCards('incoming-trade-receive', offer.offered);
+                const eligible = canAffordRequested(offer.requested);
+                document.getElementById('incoming-trade-capability').textContent = eligible ? 'You can satisfy this offer.' : 'You do not have the requested resources.';
+                document.querySelectorAll('.incoming-trade-response').forEach(button => button.disabled = button.dataset.accept === 'true' && !eligible);
+                incomingTradeModal.show();
+            });
+            connection.on('TradeAllRejected', event => {
+                if (event.gameId.toLowerCase() === gameId.toLowerCase()) bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-rejected-modal')).show();
+            });
+            connection.on('TradeReady', event => {
+                if (event.gameId.toLowerCase() !== gameId.toLowerCase()) return;
+                readyOfferId = event.offerId;
+                const select = document.getElementById('trade-ready-partner');
+                select.innerHTML = (event.acceptedUserIds || []).map(id => `<option value="${id}">${event.acceptedNames?.[id] || id}</option>`).join('');
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).show();
+            });
+            document.getElementById('finalize-ready-trade').addEventListener('click', () => {
+                const acceptingUserId = document.getElementById('trade-ready-partner').value;
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).hide();
+                postCommand('@Url.Action("FinalizeTrade", "Games")', { offerId: readyOfferId, acceptingUserId });
+            });
+            document.getElementById('cancel-ready-trade').addEventListener('click', () => {
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).hide();
+                postCommand('@Url.Action("CancelTrade", "Games")', { offerId: readyOfferId });
+            });
+            document.querySelectorAll('.incoming-trade-response').forEach(button => button.addEventListener('click', () => {
+                const accept = button.dataset.accept;
+                incomingTradeModal.hide();
+                postCommand('@Url.Action("RespondToTrade", "Games")', { offerId: incomingOfferId, accept });
+            }));
             connection.on('GameStateUpdated', updatedGameId => {
                 if (updatedGameId.toLowerCase() !== gameId.toLowerCase() || refreshing) return;
                 refreshing = true;

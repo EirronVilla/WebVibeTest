@@ -85,7 +85,8 @@ public sealed record ResourceBundle(int Brick, int Lumber, int Wool, int Grain, 
 
 public sealed record TradingReadModel(
     IReadOnlyList<TradeOfferReadModel> Offers,
-    IReadOnlyDictionary<ResourceType, int> MaritimeRates);
+    IReadOnlyDictionary<ResourceType, int> MaritimeRates,
+    int OffersRemainingThisTurn);
 
 public sealed record TradeOfferReadModel(
     Guid Id,
@@ -97,7 +98,7 @@ public sealed record TradeOfferReadModel(
     IReadOnlyList<TradeResponseReadModel> Responses);
 
 public sealed record TradeResponseReadModel(string UserId, string DisplayName, TradeResponseStatus Status);
-public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds);
+public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds, bool AllRejected = false, string? ProposerUserId = null, IReadOnlyList<string>? AcceptedUserIds = null, bool AllResponded = false);
 public sealed record MaritimeTradeResult(ResourceType Given, int Rate, ResourceType Received);
 
 public sealed record DevelopmentCardsReadModel(

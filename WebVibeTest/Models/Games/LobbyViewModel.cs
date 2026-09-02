@@ -12,6 +12,7 @@ public sealed class LobbyViewModel
     public string? JoinCode { get; init; }
     public bool IsCurrentUserHost { get; init; }
     public bool CanStart { get; init; }
+    public bool ColorsAreUnique { get; init; }
     public IReadOnlyList<LobbyPlayerViewModel> Players { get; init; } = [];
 }
 

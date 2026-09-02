@@ -55,6 +55,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .Where(user => userIds.Contains(user.Id))
             .ToDictionaryAsync(user => user.Id, user => user.UserName ?? user.Email ?? user.Id, cancellationToken);
 
+        var colorsAreUnique = game.Players.Select(player => player.Color).Distinct().Count() == game.Players.Count;
         return new WaitingLobby(
             game.Id,
             game.Name,
@@ -63,7 +64,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             game.IsPrivate,
             game.JoinCode,
             game.HostUserId == userId,
-            game.HostUserId == userId && game.Players.Count >= 3 && game.Players.Count <= game.MaxPlayers,
+            game.HostUserId == userId && game.Players.Count >= 3 && game.Players.Count <= game.MaxPlayers && colorsAreUnique,
+            colorsAreUnique,
             game.Players
                 .OrderBy(player => player.TurnOrder)
                 .Select(player => new WaitingLobbyPlayer(
@@ -72,6 +74,33 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                     player.IsHost,
                     player.UserId == userId))
                 .ToList());
+    }
+
+    public async Task SelectPlayerColorAsync(string userId, Guid gameId, PlayerColor color, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        if (!Enum.IsDefined(color))
+        {
+            throw new ArgumentOutOfRangeException(nameof(color), "Select a supported player color.");
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var game = await dbContext.Games
+            .Include(game => game.Players)
+            .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new InvalidOperationException("The game was not found.");
+
+        if (game.Status != GameStatus.WaitingForPlayers)
+        {
+            throw new InvalidOperationException("Colors may only be changed while waiting for players.");
+        }
+
+        var player = game.Players.SingleOrDefault(player => player.UserId == userId)
+            ?? throw new UnauthorizedAccessException("Only joined players may select a color.");
+
+        player.Color = color;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<Game> CreateGameAsync(string userId, string name, int maxPlayers, bool isPrivate, CancellationToken cancellationToken = default)
@@ -213,6 +242,11 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             throw new InvalidOperationException($"The game requires between 3 and {game.MaxPlayers} players to start.");
         }
 
+        if (game.Players.Select(player => player.Color).Distinct().Count() != game.Players.Count)
+        {
+            throw new InvalidOperationException("Every player must select a different color before the game can start.");
+        }
+
         var seed = RandomNumberGenerator.GetInt32(1, int.MaxValue);
         var orderedPlayers = game.Players
             .OrderBy(player => TurnOrderKey(seed, player.UserId), StringComparer.Ordinal)
@@ -338,7 +372,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                         response.Status)).ToList()
                     : []))
                 .ToList(),
-            GetMaritimeRates(board, userId));
+            GetMaritimeRates(board, userId),
+            Math.Max(0, 10 - await dbContext.TradeOffers.AsNoTracking().CountAsync(offer => offer.GameId == gameId && offer.TurnNumber == game.TurnNumber, cancellationToken)));
         var eligibleTargets = game.Phase == GamePhase.AwaitingRobberyTarget && isCurrentPlayer
             ? GetEligibleRobberyTargets(game, board)
                 .Select(player => new RobberyTarget(player.UserId, userNames.GetValueOrDefault(player.UserId, "Unknown")))
@@ -940,12 +975,14 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Trades may only be proposed by the active player during turn actions.");
         if (game.Players.Count >= 5 && game.IsSecondaryActionPhase) throw new InvalidOperationException("The secondary action player may not propose player-to-player trades.");
+        if (await dbContext.TradeOffers.CountAsync(offer => offer.GameId == gameId && offer.TurnNumber == game.TurnNumber, cancellationToken) >= 10)
+            throw new InvalidOperationException("Only 10 player trade offers are allowed per turn.");
         var proposer = game.Players.Single(player => player.UserId == userId);
         EnsureBundleOwned(proposer, offered);
         var opponents = game.Players.Where(player => player.UserId != userId).ToList();
         if (opponents.Count == 0) throw new InvalidOperationException("There are no eligible trade partners.");
 
-        var offer = CreateTradeOffer(gameId, userId, offered, requested);
+        var offer = CreateTradeOffer(gameId, userId, offered, requested, game.TurnNumber);
         foreach (var opponent in opponents)
         {
             offer.Responses.Add(new TradeResponse
@@ -983,7 +1020,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         response.RespondedAt = DateTime.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+        var accepted = offer.Responses.Where(candidate => candidate.Status == TradeResponseStatus.Accepted).Select(candidate => candidate.UserId).ToList();
+        var allResponded = offer.Responses.All(candidate => candidate.Status != TradeResponseStatus.Pending);
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList(), allResponded && accepted.Count == 0, offer.ProposerUserId, accepted, allResponded);
     }
 
     public async Task<TradeEventResult> FinalizeTradeAsync(
@@ -1000,6 +1039,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var acceptedResponse = offer.Responses.SingleOrDefault(response => response.UserId == acceptingUserId
             && response.Status == TradeResponseStatus.Accepted)
             ?? throw new InvalidOperationException("That player has not accepted this trade.");
+        if (offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending))
+            throw new InvalidOperationException("Wait until all players have responded before selecting a trade.");
         var proposer = game.Players.Single(player => player.UserId == userId);
         var acceptingPlayer = game.Players.Single(player => player.UserId == acceptingUserId);
         var offered = OfferedBundle(offer);
@@ -1066,10 +1107,10 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .SingleOrDefaultAsync(offer => offer.Id == offerId && offer.GameId == gameId && offer.Status == TradeStatus.Open, cancellationToken)
             ?? throw new InvalidOperationException("The trade offer is no longer open.");
 
-    private static TradeOffer CreateTradeOffer(Guid gameId, string userId, ResourceBundle offered, ResourceBundle requested) =>
+    private static TradeOffer CreateTradeOffer(Guid gameId, string userId, ResourceBundle offered, ResourceBundle requested, int turnNumber) =>
         new()
         {
-            Id = Guid.NewGuid(), GameId = gameId, ProposerUserId = userId, Status = TradeStatus.Open, CreatedAt = DateTime.UtcNow,
+            Id = Guid.NewGuid(), GameId = gameId, ProposerUserId = userId, TurnNumber = turnNumber, Status = TradeStatus.Open, CreatedAt = DateTime.UtcNow,
             OfferedBrick = offered.Brick, OfferedLumber = offered.Lumber, OfferedWool = offered.Wool, OfferedGrain = offered.Grain, OfferedOre = offered.Ore,
             RequestedBrick = requested.Brick, RequestedLumber = requested.Lumber, RequestedWool = requested.Wool, RequestedGrain = requested.Grain, RequestedOre = requested.Ore
         };

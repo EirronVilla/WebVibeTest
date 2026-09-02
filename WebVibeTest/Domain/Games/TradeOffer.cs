@@ -7,6 +7,7 @@ public sealed class TradeOffer
     public required string ProposerUserId { get; set; }
     public TradeStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
+    public int TurnNumber { get; set; }
     public int OfferedBrick { get; set; }
     public int OfferedLumber { get; set; }
     public int OfferedWool { get; set; }

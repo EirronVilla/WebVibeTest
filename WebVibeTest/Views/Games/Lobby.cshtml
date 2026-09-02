@@ -3,7 +3,7 @@
     ViewData["Title"] = "Waiting lobby";
 }
 
-<div class="d-flex justify-content-between align-items-start mb-3">
+<div class="medieval-panel d-flex justify-content-between align-items-start mb-4 p-4">
     <div>
         <h1>@Model.Name</h1>
         <p class="mb-1"><strong>Host:</strong> @Model.HostName</p>
@@ -27,8 +27,8 @@
     </div>
 }
 
-<h2 class="h4">Joined players</h2>
-<ul class="list-group mb-4">
+<h2 class="h4 medieval-heading">Joined players</h2>
+<ul class="list-group medieval-list mb-4">
     @foreach (var player in Model.Players)
     {
         <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -43,7 +43,23 @@
                     <span class="badge bg-secondary ms-1">Host</span>
                 }
             </span>
-            <span>@player.Color</span>
+            @if (player.IsCurrentUser)
+            {
+                <form asp-action="SelectColor" asp-route-id="@Model.Id" method="post" class="d-flex align-items-center gap-2">
+                    <label for="player-color" class="visually-hidden">Player color</label>
+                    <select id="player-color" name="color" class="form-select form-select-sm player-color-select" onchange="this.form.requestSubmit()">
+                        @foreach (var color in Enum.GetValues<WebVibeTest.Domain.Games.PlayerColor>())
+                        {
+                            <option value="@color" selected="@(color == player.Color)">@color</option>
+                        }
+                    </select>
+                    <noscript><button class="btn btn-sm btn-outline-primary" type="submit">Choose</button></noscript>
+                </form>
+            }
+            else
+            {
+                <span class="player-color-badge player-color-@player.Color.ToString().ToLowerInvariant()">@player.Color</span>
+            }
         </li>
     }
 </ul>
@@ -60,7 +76,14 @@
         else
         {
             <button type="button" class="btn btn-success" disabled>Start game</button>
-            <span class="text-muted ms-2">At least 3 players are required.</span>
+            @if (Model.Players.Count < 3)
+            {
+                <span class="text-muted ms-2">At least 3 players are required.</span>
+            }
+            else if (!Model.ColorsAreUnique)
+            {
+                <span class="text-danger ms-2">Every player must choose a different color.</span>
+            }
         }
     </form>
 }
@@ -74,19 +97,23 @@
     <script>
         (() => {
             const gameId = "@Model.Id";
+            let isSubmitting = false;
+            document.querySelectorAll("main form").forEach(form => {
+                form.addEventListener("submit", () => { isSubmitting = true; });
+            });
             const connection = new signalR.HubConnectionBuilder()
                 .withUrl("/gameHub")
                 .withAutomaticReconnect()
                 .build();
 
             connection.on("LobbyUpdated", updatedGameId => {
-                if (updatedGameId.toLowerCase() === gameId.toLowerCase()) {
+                if (!isSubmitting && updatedGameId.toLowerCase() === gameId.toLowerCase()) {
                     window.location.reload();
                 }
             });
 
             connection.on("GameStarted", startedGameId => {
-                if (startedGameId.toLowerCase() === gameId.toLowerCase()) {
+                if (!isSubmitting && startedGameId.toLowerCase() === gameId.toLowerCase()) {
                     window.location.href = `/Games/Play/${gameId}`;
                 }
             });

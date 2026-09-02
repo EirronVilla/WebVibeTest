@@ -21,6 +21,8 @@ public sealed class GameHub(IGameService gameService) : Hub
     public const string TradeRespondedEvent = "TradeResponded";
     public const string TradeCompletedEvent = "TradeCompleted";
     public const string TradeCancelledEvent = "TradeCancelled";
+    public const string TradeAllRejectedEvent = "TradeAllRejected";
+    public const string TradeReadyEvent = "TradeReady";
     public const string MaritimeTradeCompletedEvent = "MaritimeTradeCompleted";
     public const string DevelopmentCardBoughtEvent = "DevelopmentCardBought";
     public const string DevelopmentCardPlayedEvent = "DevelopmentCardPlayed";

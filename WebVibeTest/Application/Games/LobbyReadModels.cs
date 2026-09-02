@@ -19,6 +19,7 @@ public sealed record WaitingLobby(
     string? JoinCode,
     bool IsCurrentUserHost,
     bool CanStart,
+    bool ColorsAreUnique,
     IReadOnlyList<WaitingLobbyPlayer> Players);
 
 public sealed record WaitingLobbyPlayer(

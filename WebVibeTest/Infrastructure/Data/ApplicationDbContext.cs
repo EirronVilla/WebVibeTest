@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 
 using WebVibeTest.Domain.Games;
+using WebVibeTest.Infrastructure.Identity;
 
 namespace WebVibeTest.Infrastructure.Data
 {
@@ -12,6 +13,7 @@ namespace WebVibeTest.Infrastructure.Data
         public DbSet<TradeOffer> TradeOffers => Set<TradeOffer>();
         public DbSet<TradeResponse> TradeResponses => Set<TradeResponse>();
         public DbSet<DevelopmentCard> DevelopmentCards => Set<DevelopmentCard>();
+        public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {

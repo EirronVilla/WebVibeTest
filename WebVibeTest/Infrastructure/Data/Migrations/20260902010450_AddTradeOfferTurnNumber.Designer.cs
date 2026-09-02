@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using WebVibeTest.Infrastructure.Data;
@@ -11,9 +12,11 @@ using WebVibeTest.Infrastructure.Data;
 namespace WebVibeTest.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260902010450_AddTradeOfferTurnNumber")]
+    partial class AddTradeOfferTurnNumber
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -445,6 +448,9 @@ namespace WebVibeTest.Infrastructure.Data.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("GameId", "Color")
+                        .IsUnique();
+
                     b.HasIndex("GameId", "TurnOrder")
                         .IsUnique();
 
@@ -542,20 +548,6 @@ namespace WebVibeTest.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("TradeResponses");
-                });
-
-            modelBuilder.Entity("WebVibeTest.Infrastructure.Identity.UserProfile", b =>
-                {
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ProfileImagePath")
-                        .HasMaxLength(300)
-                        .HasColumnType("character varying(300)");
-
-                    b.HasKey("UserId");
-
-                    b.ToTable("UserProfiles");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
@@ -689,15 +681,6 @@ namespace WebVibeTest.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("TradeOffer");
-                });
-
-            modelBuilder.Entity("WebVibeTest.Infrastructure.Identity.UserProfile", b =>
-                {
-                    b.HasOne("Microsoft.AspNetCore.Identity.IdentityUser", null)
-                        .WithOne()
-                        .HasForeignKey("WebVibeTest.Infrastructure.Identity.UserProfile", "UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("WebVibeTest.Domain.Games.Game", b =>

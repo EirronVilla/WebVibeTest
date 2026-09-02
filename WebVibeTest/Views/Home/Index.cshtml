@@ -1,8 +1,47 @@
 ﻿@{
-    ViewData["Title"] = "Home Page";
+    ViewData["Title"] = "My Hall";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
-</div>
+@model WebVibeTest.Models.ProfileViewModel
+
+<section class="profile-hero medieval-panel p-4 p-lg-5 mb-4">
+    @if (TempData["ProfileError"] is string error) { <div class="alert alert-danger">@error</div> }
+    @if (TempData["ProfileMessage"] is string message) { <div class="alert alert-success">@message</div> }
+    <div class="row align-items-center g-4">
+        <div class="col-md-auto text-center">
+            <div class="profile-portrait-frame">
+                @if (!string.IsNullOrWhiteSpace(Model.ProfileImagePath))
+                {
+                    <img class="profile-portrait" src="@Model.ProfileImagePath" alt="Portrait of @Model.Username" />
+                }
+                else
+                {
+                    <div class="profile-portrait-placeholder" aria-label="No portrait uploaded">♜</div>
+                }
+            </div>
+            <form asp-action="UploadPicture" method="post" enctype="multipart/form-data" class="mt-3">
+                <label for="picture" class="form-label small">Choose a portrait (JPG, PNG, WebP; 5 MB max)</label>
+                <input id="picture" name="picture" type="file" class="form-control form-control-sm" accept="image/jpeg,image/png,image/webp" required />
+                <button type="submit" class="btn btn-medieval btn-sm mt-2">Upload portrait</button>
+            </form>
+        </div>
+        <div class="col">
+            <p class="medieval-eyebrow mb-1">Player Chronicle</p>
+            <h1 class="display-5 medieval-heading">@Model.Username</h1>
+            @if (!string.IsNullOrWhiteSpace(Model.Email)) { <p class="text-muted">@Model.Email</p> }
+            <a asp-controller="Games" asp-action="Index" class="btn btn-medieval">Enter the game hall</a>
+        </div>
+    </div>
+</section>
+
+<section aria-labelledby="statistics-heading">
+    <h2 id="statistics-heading" class="medieval-heading mb-3">Your Chronicle</h2>
+    <div class="row g-3 profile-stats">
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Games played</span><strong>@Model.Statistics.GamesPlayed</strong></div></div>
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Victories</span><strong>@Model.Statistics.Wins</strong></div></div>
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Win rate</span><strong>@Model.Statistics.WinPercentage%</strong></div></div>
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Total VP</span><strong>@Model.Statistics.TotalVictoryPoints</strong></div></div>
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Average VP</span><strong>@Model.Statistics.AverageVictoryPoints</strong></div></div>
+        <div class="col-6 col-lg-4"><div class="stat-card"><span>Average rank</span><strong>@Model.Statistics.AverageFinishingPosition</strong></div></div>
+    </div>
+</section>
