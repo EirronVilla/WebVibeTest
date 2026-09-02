@@ -68,6 +68,8 @@ public static class Program
         builder.Services.AddScoped<GameService>();
         builder.Services.AddScoped<IGameService, ExecutionStrategyGameService>();
         builder.Services.AddSingleton<IGameActionLog, InMemoryGameActionLog>();
+        builder.Services.AddSingleton<InMemoryGameChat>();
+        builder.Services.AddHostedService<GameTimeoutWorker>();
         builder.Services.AddHealthChecks();
 
         var app = builder.Build();

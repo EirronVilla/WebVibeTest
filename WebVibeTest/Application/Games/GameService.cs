@@ -375,6 +375,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
                 offer.ProposerUserId == userId,
                 OfferedBundle(offer),
                 RequestedBundle(offer),
+                offer.ResponseDeadlineUtc,
                 offer.Responses.SingleOrDefault(response => response.UserId == userId)?.Status,
                 offer.ProposerUserId == userId
                     ? offer.Responses.Select(response => new TradeResponseReadModel(
@@ -395,6 +396,8 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         return new ActiveGameReadModel(
             game.Id,
             game.Name,
+            game.StartedAt!.Value,
+            game.ActionDeadlineUtc,
             game.Phase!.Value,
             userNames.GetValueOrDefault(game.CurrentPlayerUserId!, "Unknown"),
             isCurrentPlayer,
@@ -1025,7 +1028,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         dbContext.TradeOffers.Add(offer);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList());
+        return new TradeEventResult(offer.Id, game.Players.Select(player => player.UserId).ToList(), ResponseDeadlineUtc: offer.ResponseDeadlineUtc);
     }
 
     public async Task<TradeEventResult> RespondToTradeAsync(
@@ -1151,6 +1154,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         new()
         {
             Id = Guid.NewGuid(), GameId = gameId, ProposerUserId = userId, TurnNumber = turnNumber, Status = TradeStatus.Open, CreatedAt = DateTime.UtcNow,
+            ResponseDeadlineUtc = DateTime.UtcNow.AddMinutes(1),
             OfferedBrick = offered.Brick, OfferedLumber = offered.Lumber, OfferedWool = offered.Wool, OfferedGrain = offered.Grain, OfferedOre = offered.Ore,
             RequestedBrick = requested.Brick, RequestedLumber = requested.Lumber, RequestedWool = requested.Wool, RequestedGrain = requested.Grain, RequestedOre = requested.Ore
         };

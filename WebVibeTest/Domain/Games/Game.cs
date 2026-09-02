@@ -12,6 +12,7 @@ public sealed class Game
     public DateTime CreatedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
+    public DateTime? ActionDeadlineUtc { get; set; }
     public int? BoardSeed { get; set; }
     public string? BoardStateJson { get; set; }
     public GamePhase? Phase { get; set; }

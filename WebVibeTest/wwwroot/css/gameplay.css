@@ -177,6 +177,11 @@
 .action-log-list li { padding: .12rem .2rem; border-bottom: 1px dotted rgba(90,65,29,.25); }
 .action-log-list li:last-child { border-bottom: 0; }
 .compact-waiting-indicator { font-size: .85rem; }
+.game-clocks { margin-left: auto; font-variant-numeric: tabular-nums; }
+.game-chat-panel { padding: .45rem .6rem; }
+.game-chat-messages { height: 130px; padding: .35rem; overflow-y: auto; background: rgba(255,255,255,.34); border: 1px solid rgba(112,82,33,.35); border-radius: .3rem; font-size: .82rem; }
+.game-chat-messages > div { padding: .12rem 0; overflow-wrap: anywhere; }
+.game-chat-form { display: grid; grid-template-columns: 1fr auto; gap: .35rem; margin-top: .35rem; }
 
 .discard-resource-grid { grid-template-columns: repeat(5, minmax(80px, 1fr)); }
 .discard-progress { padding: .35rem .5rem; border-radius: .3rem; background: #f1e5c3; font-weight: 700; text-align: center; }

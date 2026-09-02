@@ -6,6 +6,8 @@ namespace WebVibeTest.Application.Games;
 public sealed record ActiveGameReadModel(
     Guid Id,
     string Name,
+    DateTime StartedAtUtc,
+    DateTime? ActionDeadlineUtc,
     GamePhase Phase,
     string CurrentPlayerName,
     bool IsCurrentPlayer,
@@ -98,11 +100,12 @@ public sealed record TradeOfferReadModel(
     bool IsProposer,
     ResourceBundle Offered,
     ResourceBundle Requested,
+    DateTime ResponseDeadlineUtc,
     TradeResponseStatus? OwnResponse,
     IReadOnlyList<TradeResponseReadModel> Responses);
 
 public sealed record TradeResponseReadModel(string UserId, string DisplayName, TradeResponseStatus Status);
-public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds, bool AllRejected = false, string? ProposerUserId = null, IReadOnlyList<string>? AcceptedUserIds = null, bool AllResponded = false);
+public sealed record TradeEventResult(Guid OfferId, IReadOnlyList<string> ParticipantUserIds, bool AllRejected = false, string? ProposerUserId = null, IReadOnlyList<string>? AcceptedUserIds = null, bool AllResponded = false, DateTime? ResponseDeadlineUtc = null);
 public sealed record MaritimeTradeResult(ResourceType Given, int Rate, ResourceType Received);
 
 public sealed record DevelopmentCardsReadModel(

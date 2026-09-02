@@ -20,5 +20,20 @@ namespace WebVibeTest.Infrastructure.Data
             base.OnModelCreating(builder);
             builder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            ChangeTracker.DetectChanges();
+            var hasRelatedAction = ChangeTracker.Entries().Any(entry =>
+                entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted
+                && entry.Entity is GamePlayer or TradeOffer or TradeResponse or DevelopmentCard);
+            foreach (var entry in ChangeTracker.Entries<Game>().Where(entry =>
+                entry.Entity.Status == GameStatus.InProgress
+                && (hasRelatedAction || entry.State == EntityState.Modified)))
+            {
+                entry.Entity.ActionDeadlineUtc = DateTime.UtcNow.AddMinutes(1);
+            }
+            return base.SaveChangesAsync(cancellationToken);
+        }
     }
 }

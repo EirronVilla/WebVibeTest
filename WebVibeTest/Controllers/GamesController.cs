@@ -472,6 +472,7 @@ public sealed class GamesController(
                 gameId = id,
                 offerId = result.OfferId,
                 proposerUserId = CurrentUserId,
+                responseDeadlineUtc = result.ResponseDeadlineUtc,
                 offered = new { brick = offeredBrick, lumber = offeredLumber, wool = offeredWool, grain = offeredGrain, ore = offeredOre },
                 requested = new { brick = requestedBrick, lumber = requestedLumber, wool = requestedWool, grain = requestedGrain, ore = requestedOre }
             }, cancellationToken);

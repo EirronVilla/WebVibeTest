@@ -40,6 +40,7 @@
 <div class="game-status-line">
     <h1>@Model.Name</h1>
     <span><strong>Round @Model.TurnNumber</strong> &middot; @Model.Phase &middot; <strong>@currentPlayerShortName</strong> may act</span>
+    <span class="game-clocks"><strong>Game:</strong> <span id="game-elapsed">--:--</span> &middot; <strong>Action:</strong> <span id="action-countdown">--:--</span></span>
 </div>
 @if (Model.PairedTurn.PrimaryPlayerUserId is not null && Model.Players.Count >= 5)
 {
@@ -305,6 +306,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         <div class="modal-body">
             <div class="trade-visual-columns"><div><h3 class="trade-direction">YOU GIVE</h3><div id="incoming-trade-give" class="trade-card-row"></div></div><div><h3 class="trade-direction">YOU RECEIVE</h3><div id="incoming-trade-receive" class="trade-card-row"></div></div></div>
             <p id="incoming-trade-summary" class="small text-muted mt-3"></p><div id="incoming-trade-capability" class="small"></div>
+            <div class="mt-2"><strong>Automatic response in <span id="trade-response-countdown">1:00</span></strong></div>
         </div>
         <div class="modal-footer"><button type="button" class="btn btn-outline-danger incoming-trade-response" data-accept="false">Reject</button><button type="button" class="btn btn-success incoming-trade-response" data-accept="true">Accept</button></div>
     </div></div>
@@ -545,6 +547,14 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         }
     </ol>
 </section>
+<section class="renaissance-panel game-chat-panel" aria-labelledby="game-chat-title">
+    <div class="action-log-header"><h2 id="game-chat-title">Game Chat</h2><span>Not persisted</span></div>
+    <div id="game-chat-messages" class="game-chat-messages" aria-live="polite"></div>
+    <form id="game-chat-form" class="game-chat-form">
+        <input id="game-chat-input" class="form-control form-control-sm" maxlength="500" autocomplete="off" placeholder="Message the players…" aria-label="Chat message" />
+        <button class="btn btn-sm btn-primary" type="submit">Send</button>
+    </form>
+</section>
 </aside>
 </div>
 
@@ -762,6 +772,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     <script>
         (() => {
             const gameId = "@Model.Id";
+            const gameStartedAt = new Date("@Model.StartedAtUtc.ToUniversalTime().ToString("O")");
+            const actionDeadline = @Html.Raw(Model.ActionDeadlineUtc is null ? "null" : $"new Date(\"{Model.ActionDeadlineUtc.Value.ToUniversalTime():O}\")");
             const currentUserId = "@User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value";
             const ownResources = { Brick: @Model.OwnResources.Brick, Lumber: @Model.OwnResources.Lumber, Wool: @Model.OwnResources.Wool, Grain: @Model.OwnResources.Grain, Ore: @Model.OwnResources.Ore };
             const productionTileKey = `catan-production-tiles:${gameId}`;
@@ -771,11 +783,28 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             let submitting = false;
             let refreshing = false;
             let pendingPlacement = null;
+            const formatDuration = totalSeconds => {
+                totalSeconds = Math.max(0, Math.floor(totalSeconds));
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor(totalSeconds % 3600 / 60);
+                const seconds = totalSeconds % 60;
+                return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`;
+            };
+            const updateClocks = () => {
+                const now = Date.now();
+                document.getElementById('game-elapsed').textContent = formatDuration((now - gameStartedAt.getTime()) / 1000);
+                const actionClock = document.getElementById('action-countdown');
+                actionClock.textContent = actionDeadline ? formatDuration((actionDeadline.getTime() - now) / 1000) : '--:--';
+                actionClock.classList.toggle('text-danger', actionDeadline && actionDeadline.getTime() - now <= 10000);
+            };
+            updateClocks();
+            window.setInterval(updateClocks, 1000);
             const placementModalElement = document.getElementById('placement-confirmation-modal');
             const placementModal = bootstrap.Modal.getOrCreateInstance(placementModalElement);
             const placementPieceName = document.getElementById('placement-piece-name');
             const incomingTradeModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('incoming-trade-modal'));
             let incomingOfferId = null;
+            let incomingTradeDeadline = null;
             const tradeReadyModalElement = document.getElementById('trade-ready-modal');
             const tradeReadyModal = bootstrap.Modal.getOrCreateInstance(tradeReadyModalElement);
             let readyOfferId = tradeReadyModalElement.dataset.readyOfferId || null;
@@ -972,6 +1001,25 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             }));
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
+            const chatMessages = document.getElementById('game-chat-messages');
+            const appendChatMessage = message => {
+                const row = document.createElement('div');
+                const name = document.createElement('strong');
+                name.textContent = `${message.senderName}: `;
+                row.append(name, document.createTextNode(message.message));
+                chatMessages.appendChild(row);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+            connection.on('ChatHistory', messages => { chatMessages.innerHTML = ''; (messages || []).forEach(appendChatMessage); });
+            connection.on('ChatMessage', appendChatMessage);
+            document.getElementById('game-chat-form').addEventListener('submit', async event => {
+                event.preventDefault();
+                const input = document.getElementById('game-chat-input');
+                const message = input.value.trim();
+                if (!message || connection.state !== signalR.HubConnectionState.Connected) return;
+                await connection.invoke('SendChatMessage', gameId, message);
+                input.value = '';
+            });
             const actionLogList = document.getElementById('action-log-list');
             const scrollActionLogToEnd = () => { if (actionLogList) actionLogList.scrollTop = actionLogList.scrollHeight; };
             scrollActionLogToEnd();
@@ -1002,6 +1050,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 setTradeWaiting(offer.proposerUserId, true);
                 if (offer.proposerUserId === currentUserId) return;
                 incomingOfferId = offer.offerId;
+                incomingTradeDeadline = new Date(offer.responseDeadlineUtc);
                 document.getElementById('incoming-trade-summary').textContent = `You give: ${tradeText(offer.requested)} · You receive: ${tradeText(offer.offered)}`;
                 renderTradeCards('incoming-trade-give', offer.requested);
                 renderTradeCards('incoming-trade-receive', offer.offered);
@@ -1010,6 +1059,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 document.querySelectorAll('.incoming-trade-response').forEach(button => button.disabled = button.dataset.accept === 'true' && !eligible);
                 incomingTradeModal.show();
             });
+            window.setInterval(() => {
+                if (incomingTradeDeadline)
+                    document.getElementById('trade-response-countdown').textContent = formatDuration((incomingTradeDeadline.getTime() - Date.now()) / 1000);
+            }, 1000);
             connection.on('TradeAllRejected', event => {
                 if (event.gameId.toLowerCase() === gameId.toLowerCase()) {
                     setTradeWaiting(currentUserId, false);
