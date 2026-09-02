@@ -52,6 +52,21 @@
     animation: terrain-production-pulse 2.4s ease-out;
 }
 
+/* Authoritative build targets already come from the server. These effects only
+   make those existing SVG hit areas easier to discover. */
+.build-road-location:not(.d-none),
+.placement-location[data-edge-id],
+.placement-location[data-free-road-edge-id] {
+    animation: valid-road-build-pulse 1.65s ease-in-out infinite;
+}
+.build-settlement-location:not(.d-none),
+.build-city-location:not(.d-none) {
+    animation: valid-vertex-build-pulse 1.65s ease-in-out infinite;
+}
+.placement-location.available-vertex > circle:first-child {
+    animation: valid-initial-vertex-pulse 1.65s ease-in-out infinite;
+}
+
 @keyframes active-turn-pulse {
     0%, 100% { box-shadow: 0 0 0 .22rem rgba(255, 207, 51, .4), 0 0 .8rem .15rem rgba(155, 23, 23, .58); }
     50% { box-shadow: 0 0 0 .38rem rgba(255, 224, 102, .62), 0 0 1.5rem .45rem rgba(155, 23, 23, .82); }
@@ -71,8 +86,29 @@
     72% { fill: rgba(255, 240, 163, .12); stroke: #fff0a3; stroke-width: .11; }
 }
 
+@keyframes valid-road-build-pulse {
+    0%, 100% { opacity: .72; stroke: #d29b19; stroke-width: .2; filter: drop-shadow(0 0 .04rem #9b1717); }
+    50% { opacity: 1; stroke: #fff4ad; stroke-width: .31; filter: drop-shadow(0 0 .2rem #ffd43b) drop-shadow(0 0 .12rem #9b1717); }
+}
+
+@keyframes valid-vertex-build-pulse {
+    0%, 100% { fill: #d29b19; fill-opacity: .25; stroke: #9b6611; stroke-width: .055; filter: drop-shadow(0 0 .04rem #9b1717); }
+    50% { fill: #fff0a3; fill-opacity: .7; stroke: #fff8dc; stroke-width: .11; filter: drop-shadow(0 0 .2rem #ffd43b) drop-shadow(0 0 .12rem #9b1717); }
+}
+
+@keyframes valid-initial-vertex-pulse {
+    0%, 100% { fill: #ffd43b; fill-opacity: .12; stroke: #9b6611; stroke-width: .045; filter: drop-shadow(0 0 .03rem #d29b19); }
+    50% { fill: #fff0a3; fill-opacity: .72; stroke: #fff8dc; stroke-width: .1; filter: drop-shadow(0 0 .18rem #ffd43b) drop-shadow(0 0 .1rem #9b1717); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .gameplay-container .player-mini.active-turn { animation: none; }
+    .gameplay-container .player-mini.active-turn,
+    .build-road-location:not(.d-none),
+    .placement-location[data-edge-id],
+    .placement-location[data-free-road-edge-id],
+    .build-settlement-location:not(.d-none),
+    .build-city-location:not(.d-none),
+    .placement-location.available-vertex > circle:first-child { animation: none; }
 }
 .gameplay-container .profile-placeholder { width: 26px; height: 26px; font-size: 1rem; }
 .gameplay-container .action-ribbon { gap: .45rem; margin-bottom: .45rem !important; padding: .35rem .45rem; }
