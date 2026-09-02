@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using WebVibeTest.Application.Games;
 using WebVibeTest.Hubs;
 using WebVibeTest.Infrastructure.Data;
+using WebVibeTest.Infrastructure.Games;
 
 namespace WebVibeTest
 {
@@ -25,6 +26,7 @@ namespace WebVibeTest
             builder.Services.AddRazorPages();
             builder.Services.AddSignalR();
             builder.Services.AddScoped<IGameService, GameService>();
+            builder.Services.AddSingleton<IGameActionLog, InMemoryGameActionLog>();
 
             var app = builder.Build();
 

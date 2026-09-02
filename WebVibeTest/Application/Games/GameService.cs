@@ -9,7 +9,7 @@ using WebVibeTest.Infrastructure.Data;
 
 namespace WebVibeTest.Application.Games;
 
-public sealed class GameService(ApplicationDbContext dbContext) : IGameService
+public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog actionLog) : IGameService
 {
     public async Task<IReadOnlyList<AvailableGame>> GetAvailablePublicGamesAsync(string userId, CancellationToken cancellationToken = default)
     {
@@ -438,7 +438,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 game.FreeRoadsRemaining,
                 isCurrentPlayer && game.Phase == GamePhase.AwaitingRoadBuilding
                     ? GetValidRoadBuildEdges(board, userId)
-                    : new HashSet<int>()));
+                    : new HashSet<int>()),
+            game.TurnNumber,
+            actionLog.GetEntries(game.Id));
     }
 
     public async Task<CompletedGameReadModel> GetCompletedGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)

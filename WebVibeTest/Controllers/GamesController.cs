@@ -13,7 +13,8 @@ namespace WebVibeTest.Controllers;
 public sealed class GamesController(
     IGameService gameService,
     UserManager<IdentityUser> userManager,
-    IHubContext<GameHub> hubContext) : Controller
+    IHubContext<GameHub> hubContext,
+    IGameActionLog actionLog) : Controller
 {
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
@@ -242,6 +243,7 @@ public sealed class GamesController(
         try
         {
             await gameService.PlaceInitialSettlementAsync(CurrentUserId, id, vertexId, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.SettlementBuilt, CurrentUserId), cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.AwardsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
             return Ok();
@@ -263,6 +265,7 @@ public sealed class GamesController(
         try
         {
             await gameService.PlaceInitialRoadAsync(CurrentUserId, id, edgeId, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.RoadBuilt, CurrentUserId), cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.AwardsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
             return Ok();
@@ -284,6 +287,7 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.RollDiceAsync(CurrentUserId, id, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.DiceRolled, CurrentUserId, DiceTotal: result.Die1 + result.Die2), cancellationToken);
             var clients = hubContext.Clients.Group(GameHub.GroupName(id));
             await clients.SendAsync(GameHub.DiceRolledEvent, new { gameId = id, result.Die1, result.Die2 }, cancellationToken);
             if (result.Production.Count > 0)
@@ -312,6 +316,7 @@ public sealed class GamesController(
                 id,
                 new ResourceDiscard(brick, lumber, wool, grain, ore),
                 cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.CardsDiscarded, CurrentUserId, Quantity: brick + lumber + wool + grain + ore), cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id))
                 .SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
@@ -330,6 +335,7 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.MoveRobberAsync(CurrentUserId, id, hexId, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.RobberMoved, CurrentUserId), cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id))
                 .SendAsync(GameHub.RobberMovedEvent, new { gameId = id, result.HexId }, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
@@ -348,6 +354,7 @@ public sealed class GamesController(
         try
         {
             await gameService.RobPlayerAsync(CurrentUserId, id, targetUserId, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.PlayerRobbed, CurrentUserId, TargetUserId: targetUserId), cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id))
                 .SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
@@ -386,6 +393,7 @@ public sealed class GamesController(
     {
         try
         {
+            await actionLog.CaptureAwardsAsync(id, cancellationToken);
             var result = await gameService.BuildRoadAsync(CurrentUserId, id, edgeId, cancellationToken);
             await BroadcastBuildAsync(id, result, cancellationToken);
             return Ok();
@@ -402,6 +410,7 @@ public sealed class GamesController(
     {
         try
         {
+            await actionLog.CaptureAwardsAsync(id, cancellationToken);
             var result = await gameService.BuildSettlementAsync(CurrentUserId, id, vertexId, cancellationToken);
             await BroadcastBuildAsync(id, result, cancellationToken);
             return Ok();
@@ -418,6 +427,7 @@ public sealed class GamesController(
     {
         try
         {
+            await actionLog.CaptureAwardsAsync(id, cancellationToken);
             var result = await gameService.BuildCityAsync(CurrentUserId, id, vertexId, cancellationToken);
             await BroadcastBuildAsync(id, result, cancellationToken);
             return Ok();
@@ -491,6 +501,7 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.FinalizeTradeAsync(CurrentUserId, id, offerId, acceptingUserId, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.PlayerTradeCompleted, CurrentUserId, TargetUserId: acceptingUserId, TradeOfferId: offerId), cancellationToken);
             await SendTradeEventAsync(GameHub.TradeCompletedEvent, id, result, cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
             return Ok();
@@ -520,6 +531,7 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.MaritimeTradeAsync(CurrentUserId, id, give, receive, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.MaritimeTradeCompleted, CurrentUserId, GivenResource: result.Given, ReceivedResource: result.Received, TradeRate: result.Rate), cancellationToken);
             var clients = hubContext.Clients.Group(GameHub.GroupName(id));
             await clients.SendAsync(GameHub.MaritimeTradeCompletedEvent, new { gameId = id, result.Given, result.Rate, result.Received }, cancellationToken);
             await clients.SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
@@ -535,6 +547,7 @@ public sealed class GamesController(
         try
         {
             var result = await gameService.BuyDevelopmentCardAsync(CurrentUserId, id, cancellationToken);
+            await actionLog.RecordAsync(new GameActionEvent(id, GameActionKind.DevelopmentCardBought, CurrentUserId), cancellationToken);
             await hubContext.Clients.User(result.OwnerUserId).SendAsync(GameHub.DevelopmentCardBoughtEvent,
                 new { gameId = id, result.CardId, result.Type }, cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.ResourceCountsChangedEvent, id, cancellationToken);
@@ -563,7 +576,7 @@ public sealed class GamesController(
     [HttpPost, ValidateAntiForgeryToken]
     public async Task<IActionResult> BuildFreeRoad(Guid id, int edgeId, CancellationToken cancellationToken)
     {
-        try { await BroadcastBuildAsync(id, await gameService.BuildFreeRoadAsync(CurrentUserId, id, edgeId, cancellationToken), cancellationToken); return Ok(); }
+        try { await actionLog.CaptureAwardsAsync(id, cancellationToken); await BroadcastBuildAsync(id, await gameService.BuildFreeRoadAsync(CurrentUserId, id, edgeId, cancellationToken), cancellationToken); return Ok(); }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException) { return BadRequest(exception.Message); }
     }
 
@@ -604,13 +617,26 @@ public sealed class GamesController(
     private async Task NotifyGameStateAndCompletionAsync(Guid gameId, CancellationToken cancellationToken)
     {
         var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
+        var isCompleted = await gameService.IsCompletedAsync(gameId, cancellationToken);
+        if (isCompleted) await actionLog.RecordCompletionAsync(gameId, cancellationToken);
         await clients.SendAsync(GameHub.GameStateUpdatedEvent, gameId, cancellationToken);
-        if (await gameService.IsCompletedAsync(gameId, cancellationToken))
+        if (isCompleted)
+        {
             await clients.SendAsync(GameHub.GameCompletedEvent, gameId, cancellationToken);
+        }
     }
 
     private async Task BroadcastBuildAsync(Guid gameId, BuildResult result, CancellationToken cancellationToken)
     {
+        var kind = result.BuildingType switch
+        {
+            "Road" => GameActionKind.RoadBuilt,
+            "Settlement" => GameActionKind.SettlementBuilt,
+            "City" => GameActionKind.CityBuilt,
+            _ => throw new InvalidOperationException($"Unknown building type '{result.BuildingType}'.")
+        };
+        await actionLog.RecordAsync(new GameActionEvent(gameId, kind, result.UserId), cancellationToken);
+        await actionLog.RecordAwardChangesAsync(gameId, cancellationToken);
         var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
         await clients.SendAsync(GameHub.BuildingPlacedEvent, new
         {
@@ -637,7 +663,10 @@ public sealed class GamesController(
     {
         try
         {
+            await actionLog.CaptureAwardsAsync(gameId, cancellationToken);
             var result = await play();
+            await actionLog.RecordAsync(new GameActionEvent(gameId, GameActionKind.DevelopmentCardPlayed, result.PlayerUserId, DevelopmentCardType: result.Type), cancellationToken);
+            await actionLog.RecordAwardChangesAsync(gameId, cancellationToken);
             var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
             await clients.SendAsync(GameHub.DevelopmentCardPlayedEvent,
                 new { gameId, result.Type, result.PlayerUserId }, cancellationToken);

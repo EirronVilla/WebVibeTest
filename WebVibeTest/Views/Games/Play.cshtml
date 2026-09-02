@@ -18,14 +18,22 @@
 }
 @{
     ViewData["Title"] = Model.Name;
+    ViewData["MainContainerClass"] = "container-fluid gameplay-container";
+    ViewData["HideFooter"] = true;
     var board = Model.Board;
     var svgBounds = BoardSvgBounds.From(board);
     var viewBox = $"{F(svgBounds.MinX)} {F(svgBounds.MinY)} {F(svgBounds.Width)} {F(svgBounds.Height)}";
     var currentPlayerShortName = Model.CurrentPlayerName.Split('@')[0];
 }
 
-<h1>@Model.Name</h1>
-<p><strong>Phase:</strong> @Model.Phase &middot; <strong>Current player:</strong> @currentPlayerShortName</p>
+@section Styles {
+    <link rel="stylesheet" href="~/css/gameplay.css" asp-append-version="true" />
+}
+
+<div class="game-status-line">
+    <h1>@Model.Name</h1>
+    <span><strong>Round @Model.TurnNumber</strong> &middot; @Model.Phase &middot; <strong>@currentPlayerShortName</strong> may act</span>
+</div>
 @if (Model.PairedTurn.PrimaryPlayerUserId is not null && Model.Players.Count >= 5)
 {
     var primaryName = Model.Players.FirstOrDefault(p => p.UserId == Model.PairedTurn.PrimaryPlayerUserId)?.DisplayName?.Split('@')[0] ?? "Unknown";
@@ -90,23 +98,35 @@
     </div>
 </section>
 
+@if (Model.Phase == GamePhase.AwaitingDiscards && Model.RequiredDiscardCount <= 0)
+{
+    <div class="alert alert-warning compact-waiting-indicator" role="status">Waiting for the affected players to discard their cards&hellip;</div>
+}
+
 @if (Model.RequiredDiscardCount > 0)
 {
-    <div class="card border-warning mb-3"><div class="card-body">
-        <h2 class="h5">Discard exactly @Model.RequiredDiscardCount cards</h2>
-        <div class="resource-hand" id="discard-inputs">
-            @foreach (var resource in Enum.GetValues<ResourceType>())
-            {
-                <label class="resource-card discard-card">
-                    <img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" />
-                    <span class="resource-name">@resource</span>
-                    <span class="small text-muted">You have @Model.OwnResources.Get(resource)</span>
-                    <input class="form-control form-control-sm" type="number" min="0" max="@Model.OwnResources.Get(resource)" value="0" name="@resource.ToString().ToLowerInvariant()" aria-label="Number of @resource cards to discard" />
-                </label>
-            }
-        </div>
-        <button type="button" id="discard-resources" class="btn btn-warning mt-2">Discard</button>
-    </div></div>
+    <div class="modal fade renaissance-modal" id="discard-modal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" aria-labelledby="discard-modal-title" aria-modal="true" role="dialog">
+        <div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content border-warning">
+            <div class="modal-header"><h2 class="modal-title fs-5" id="discard-modal-title">The robber demands tribute</h2></div>
+            <div class="modal-body">
+                <p>Discard exactly <strong>@Model.RequiredDiscardCount</strong> cards. This choice cannot be skipped.</p>
+                <div class="resource-hand discard-resource-grid" id="discard-inputs">
+                    @foreach (var resource in Enum.GetValues<ResourceType>())
+                    {
+                        <label class="resource-card discard-card">
+                            <img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" />
+                            <span class="resource-name">@resource</span>
+                            <span class="small text-muted">You have @Model.OwnResources.Get(resource)</span>
+                            <input class="form-control form-control-sm discard-quantity" type="number" inputmode="numeric" min="0" max="@Model.OwnResources.Get(resource)" value="0" name="@resource.ToString().ToLowerInvariant()" aria-label="Number of @resource cards to discard" />
+                        </label>
+                    }
+                </div>
+                <div id="discard-progress" class="discard-progress mt-2" role="status">Selected 0 of @Model.RequiredDiscardCount</div>
+                <div id="discard-modal-error" class="text-danger small mt-1 d-none"></div>
+            </div>
+            <div class="modal-footer"><button type="button" id="discard-resources" class="btn btn-warning" disabled>Confirm discard</button></div>
+        </div></div>
+    </div>
 }
 
 @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberPlacement)
@@ -273,7 +293,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     </div>
 </div>
 
-<h2 class="board-heading">The Settlers' Map</h2>
+<div class="gameplay-main-grid">
+<div class="gameplay-board-column">
 <div class="awards-banner mb-2">
     <span>🏆 Longest Road: <strong>@(Model.Awards.LongestRoadHolderName ?? "Unclaimed")</strong>@if (Model.Awards.LongestRoadLength > 0) { <text> (@Model.Awards.LongestRoadLength roads)</text> }</span>
     <span>⚔ Largest Army: <strong>@(Model.Awards.LargestArmyHolderName ?? "Unclaimed")</strong></span>
@@ -450,7 +471,9 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 </div>
 </div>
 
-<section class="renaissance-panel player-hand-section mt-3">
+ </div>
+<aside class="gameplay-side-column">
+<section class="renaissance-panel player-hand-section">
     <div class="hand-column">
         <h2 class="h5">Your resources (@Model.OwnResources.Total)</h2>
         <div class="resource-hand">
@@ -469,6 +492,18 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         <small>@Model.DevelopmentCards.DeckRemaining remain in the deck</small>
     </button>
 </section>
+
+<section class="renaissance-panel action-log-panel" aria-labelledby="action-log-title">
+    <div class="action-log-header"><h2 id="action-log-title">Action Log</h2><span>Latest @Model.ActionLog.Count / 150</span></div>
+    <ol id="action-log-list" class="action-log-list">
+        @foreach (var entry in Model.ActionLog)
+        {
+            <li data-sequence="@entry.Sequence">@entry.Message</li>
+        }
+    </ol>
+</section>
+</aside>
+</div>
 
 <div class="modal fade renaissance-modal" id="development-cards-modal" tabindex="-1" aria-labelledby="development-cards-title" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content">
@@ -701,15 +736,22 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 host.innerHTML = Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `<div class="trade-card"><img src="/img/cards/${cardImages[resource]}" alt="${resource}" /><span>${amount}</span></div>`).join('');
             };
 
-            const postCommand = async (url, values = {}) => {
-                if (submitting) return;
+            const postCommand = async (url, values = {}, commandErrorBox = errorBox) => {
+                if (submitting) return false;
                 submitting = true;
-                const body = new URLSearchParams({ id: gameId, ...values, __RequestVerificationToken: token });
-                const response = await fetch(url, { method: 'POST', body });
-                if (!response.ok) {
-                    errorBox.textContent = await response.text();
-                    errorBox.classList.remove('d-none');
+                try {
+                    const body = new URLSearchParams({ id: gameId, ...values, __RequestVerificationToken: token });
+                    const response = await fetch(url, { method: 'POST', body });
+                    if (response.ok) return true;
+                    commandErrorBox.textContent = await response.text();
+                    commandErrorBox.classList.remove('d-none');
                     submitting = false;
+                    return false;
+                } catch {
+                    commandErrorBox.textContent = 'The command could not reach the server. Please try again.';
+                    commandErrorBox.classList.remove('d-none');
+                    submitting = false;
+                    return false;
                 }
             };
 
@@ -757,11 +799,39 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             }));
             document.getElementById('roll-dice')?.addEventListener('click', () => postCommand('@Url.Action("RollDice", "Games")'));
             document.getElementById('end-turn')?.addEventListener('click', () => postCommand('@Url.Action("EndTurn", "Games")'));
-            document.getElementById('discard-resources')?.addEventListener('click', () => {
-                const values = {};
-                document.querySelectorAll('#discard-inputs input').forEach(input => values[input.name] = input.value);
-                postCommand('@Url.Action("Discard", "Games")', values);
-            });
+            const discardModalElement = document.getElementById('discard-modal');
+            if (discardModalElement) {
+                const requiredDiscardCount = @Model.RequiredDiscardCount;
+                const discardInputs = [...document.querySelectorAll('#discard-inputs input')];
+                const discardButton = document.getElementById('discard-resources');
+                const discardProgress = document.getElementById('discard-progress');
+                const discardError = document.getElementById('discard-modal-error');
+                const discardModal = new bootstrap.Modal(discardModalElement, { backdrop: 'static', keyboard: false });
+                const updateDiscardSelection = () => {
+                    let selected = 0;
+                    discardInputs.forEach(input => {
+                        const maximum = Number(input.max);
+                        const amount = Math.max(0, Math.min(maximum, Number.parseInt(input.value || '0', 10) || 0));
+                        if (Number(input.value) !== amount) input.value = amount;
+                        selected += amount;
+                    });
+                    discardProgress.textContent = `Selected ${selected} of ${requiredDiscardCount}`;
+                    discardProgress.classList.toggle('is-valid', selected === requiredDiscardCount);
+                    discardProgress.classList.toggle('is-over', selected > requiredDiscardCount);
+                    discardButton.disabled = selected !== requiredDiscardCount;
+                };
+                discardInputs.forEach(input => input.addEventListener('input', updateDiscardSelection));
+                discardButton.addEventListener('click', async () => {
+                    updateDiscardSelection();
+                    if (discardButton.disabled) return;
+                    discardError.classList.add('d-none');
+                    const values = {};
+                    discardInputs.forEach(input => values[input.name] = input.value);
+                    if (await postCommand('@Url.Action("Discard", "Games")', values, discardError)) discardModal.hide();
+                });
+                updateDiscardSelection();
+                discardModal.show();
+            }
             document.getElementById('propose-trade')?.addEventListener('click', () => {
                 const values = { offeredBrick: 0, offeredLumber: 0, offeredWool: 0, offeredGrain: 0, offeredOre: 0, requestedBrick: 0, requestedLumber: 0, requestedWool: 0, requestedGrain: 0, requestedOre: 0 };
                 document.querySelectorAll('.trade-offered-input').forEach(input => values[`offered${input.dataset.resource}`] = input.value || 0);
@@ -805,6 +875,20 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             }));
 
             const connection = new signalR.HubConnectionBuilder().withUrl('/gameHub').withAutomaticReconnect().build();
+            const actionLogList = document.getElementById('action-log-list');
+            const scrollActionLogToEnd = () => { if (actionLogList) actionLogList.scrollTop = actionLogList.scrollHeight; };
+            scrollActionLogToEnd();
+            connection.on('ActionLogEntryAdded', entry => {
+                if (!actionLogList) return;
+                const wasNearEnd = actionLogList.scrollHeight - actionLogList.clientHeight - actionLogList.scrollTop < 36;
+                if (actionLogList.querySelector(`[data-sequence="${entry.sequence}"]`)) return;
+                const item = document.createElement('li');
+                item.dataset.sequence = entry.sequence;
+                item.textContent = entry.message;
+                actionLogList.appendChild(item);
+                while (actionLogList.children.length > 150) actionLogList.firstElementChild.remove();
+                if (wasNearEnd) scrollActionLogToEnd();
+            });
             connection.on('TradeOffered', offer => {
                 if (offer.gameId.toLowerCase() !== gameId.toLowerCase() || offer.proposerUserId === currentUserId) return;
                 incomingOfferId = offer.offerId;
@@ -842,6 +926,9 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             }));
             connection.on('GameStateUpdated', updatedGameId => {
                 if (updatedGameId.toLowerCase() !== gameId.toLowerCase() || refreshing) return;
+                // Preserve an affected player's in-progress discard selection when
+                // another player completes their own discard.
+                if (discardModalElement && !submitting) return;
                 refreshing = true;
                 connection.stop().finally(() => window.location.reload());
             });

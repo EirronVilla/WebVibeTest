@@ -24,7 +24,9 @@ public sealed record ActiveGameReadModel(
     TradingReadModel Trading,
     AwardsReadModel Awards,
     PairedTurnReadModel PairedTurn,
-    DevelopmentCardsReadModel DevelopmentCards);
+    DevelopmentCardsReadModel DevelopmentCards,
+    int TurnNumber,
+    IReadOnlyList<GameActionLogEntry> ActionLog);
 public sealed record PairedTurnReadModel(string? PrimaryPlayerUserId, string? SecondaryPlayerUserId, bool IsSecondaryActionPhase, string? ActionPlayerUserId);
 
 public sealed record AwardsReadModel(string? LongestRoadHolderUserId, string? LongestRoadHolderName, int LongestRoadLength, string? LargestArmyHolderUserId, string? LargestArmyHolderName);
