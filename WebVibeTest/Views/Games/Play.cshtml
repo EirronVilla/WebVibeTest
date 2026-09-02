@@ -1099,6 +1099,9 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 refreshing = true;
                 connection.stop().finally(() => window.location.reload());
             });
+            connection.on('GameCancelled', cancelledGameId => {
+                if (cancelledGameId.toLowerCase() === gameId.toLowerCase()) window.location.href = '@Url.Action("Index", "Games")';
+            });
             connection.onreconnected(() => connection.invoke('JoinLobby', gameId));
             const connect = async () => {
                 try {

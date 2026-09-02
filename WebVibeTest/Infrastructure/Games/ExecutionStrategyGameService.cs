@@ -16,6 +16,12 @@ public sealed class ExecutionStrategyGameService(
     public Task<IReadOnlyList<AvailableGame>> GetAvailablePublicGamesAsync(string userId, CancellationToken cancellationToken = default) =>
         inner.GetAvailablePublicGamesAsync(userId, cancellationToken);
 
+    public Task<IReadOnlyList<ActiveGameSummary>> GetActiveGamesAsync(string userId, CancellationToken cancellationToken = default) =>
+        inner.GetActiveGamesAsync(userId, cancellationToken);
+
+    public Task CancelActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(() => inner.CancelActiveGameAsync(userId, gameId, cancellationToken), cancellationToken);
+
     public Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default) =>
         inner.GetWaitingLobbyAsync(userId, gameId, cancellationToken);
 

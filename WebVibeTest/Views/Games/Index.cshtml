@@ -69,3 +69,55 @@ else
         </table>
     </div>
 }
+
+<section class="mt-5" aria-labelledby="active-games-title">
+    <h2 id="active-games-title" class="h3">Active games</h2>
+    <p class="text-muted">Games you are currently playing. Active games are automatically cancelled after 24 hours.</p>
+    @if (Model.ActiveGames.Count == 0)
+    {
+        <p>You have no active games.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th>Game</th><th>Host</th><th>Players</th><th>Running time</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var game in Model.ActiveGames)
+                {
+                    <tr>
+                        <td>@game.Name</td>
+                        <td>@game.HostName</td>
+                        <td>@game.PlayerCount</td>
+                        <td><span class="active-game-elapsed" data-started-at="@game.StartedAtUtc.ToUniversalTime().ToString("O")">--</span></td>
+                        <td class="text-end">
+                            <a class="btn btn-primary btn-sm" asp-action="Play" asp-route-id="@game.Id">Rejoin</a>
+                            @if (game.IsCurrentUserHost)
+                            {
+                                <form asp-action="CancelActive" asp-route-id="@game.Id" method="post" class="d-inline" onsubmit="return confirm('Cancel this game for every player? This cannot be undone.');">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">Cancel game</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@section Scripts {
+    <script>
+        (() => {
+            const updateElapsed = () => document.querySelectorAll('.active-game-elapsed').forEach(element => {
+                const seconds = Math.max(0, Math.floor((Date.now() - new Date(element.dataset.startedAt).getTime()) / 1000));
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor(seconds % 3600 / 60);
+                element.textContent = `${hours}h ${minutes}m`;
+            });
+            updateElapsed();
+            window.setInterval(updateElapsed, 60000);
+        })();
+    </script>
+}

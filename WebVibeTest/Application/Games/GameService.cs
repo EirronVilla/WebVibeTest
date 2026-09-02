@@ -30,6 +30,36 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ActiveGameSummary>> GetActiveGamesAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        return await dbContext.Games.AsNoTracking()
+            .Where(game => game.Status == GameStatus.InProgress
+                && game.Players.Any(player => player.UserId == userId))
+            .OrderByDescending(game => game.StartedAt)
+            .Select(game => new ActiveGameSummary(
+                game.Id,
+                game.Name,
+                dbContext.Users.Where(identity => identity.Id == game.HostUserId).Select(identity => identity.UserName).FirstOrDefault() ?? "Unknown",
+                game.Players.Count,
+                game.StartedAt!.Value,
+                game.HostUserId == userId))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task CancelActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        var game = await dbContext.Games.SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
+            ?? throw new InvalidOperationException("The game was not found.");
+        if (game.HostUserId != userId) throw new UnauthorizedAccessException("Only the host may cancel an active game.");
+        if (game.Status != GameStatus.InProgress) throw new InvalidOperationException("Only an active game may be cancelled.");
+        game.Status = GameStatus.Cancelled;
+        game.FinishedAt = DateTime.UtcNow;
+        game.ActionDeadlineUtc = null;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
     {
         EnsureAuthenticated(userId);

@@ -18,11 +18,37 @@ public sealed class GameTimeoutWorker(
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
+            try { await CancelExpiredGamesAsync(stoppingToken); }
+            catch (Exception exception) { logger.LogError(exception, "Failed to cancel games older than 24 hours."); }
             try { await ResolveExpiredTradesAsync(stoppingToken); }
             catch (Exception exception) { logger.LogError(exception, "Failed to resolve expired trade responses."); }
             try { await ResolveExpiredTurnsAsync(stoppingToken); }
             catch (Exception exception) { logger.LogError(exception, "Failed to resolve expired player turns."); }
         }
+    }
+
+    private async Task CancelExpiredGamesAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var now = DateTime.UtcNow;
+        var cutoff = now.AddHours(-24);
+        var games = await db.Games.Where(game => game.Status == GameStatus.InProgress && game.StartedAt <= cutoff)
+            .ToListAsync(cancellationToken);
+        foreach (var game in games)
+        {
+            game.Status = GameStatus.Cancelled;
+            game.FinishedAt = now;
+            game.ActionDeadlineUtc = null;
+        }
+        if (games.Count == 0) return;
+        var gameIds = games.Select(game => game.Id).ToList();
+        var offers = await db.TradeOffers.Where(offer => gameIds.Contains(offer.GameId) && offer.Status == TradeStatus.Open)
+            .ToListAsync(cancellationToken);
+        foreach (var offer in offers) offer.Status = TradeStatus.Cancelled;
+        await db.SaveChangesAsync(cancellationToken);
+        foreach (var game in games)
+            await hubContext.Clients.Group(GameHub.GroupName(game.Id)).SendAsync(GameHub.GameCancelledEvent, game.Id, cancellationToken);
     }
 
     private async Task ResolveExpiredTradesAsync(CancellationToken cancellationToken)
@@ -31,7 +57,7 @@ public sealed class GameTimeoutWorker(
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var now = DateTime.UtcNow;
         var offers = await db.TradeOffers.Include(offer => offer.Responses)
-            .Where(offer => offer.Status == TradeStatus.Open && offer.ResponseDeadlineUtc <= now
+            .Where(offer => offer.Game.Status == GameStatus.InProgress && offer.Status == TradeStatus.Open && offer.ResponseDeadlineUtc <= now
                 && offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending))
             .ToListAsync(cancellationToken);
         foreach (var offer in offers)

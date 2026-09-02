@@ -20,6 +20,7 @@ public sealed class GamesController(
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
     {
         var games = await gameService.GetAvailablePublicGamesAsync(CurrentUserId, cancellationToken);
+        var activeGames = await gameService.GetActiveGamesAsync(CurrentUserId, cancellationToken);
         return View(new GamesIndexViewModel
         {
             Games = games.Select(game => new AvailableGameViewModel
@@ -31,8 +32,31 @@ public sealed class GamesController(
                 MaxPlayers = game.MaxPlayers,
                 IsMember = game.IsMember
             })
-            .ToList()
+            .ToList(),
+            ActiveGames = activeGames.Select(game => new ActiveGameViewModel
+            {
+                Id = game.Id,
+                Name = game.Name,
+                HostName = game.HostName,
+                PlayerCount = game.PlayerCount,
+                StartedAtUtc = game.StartedAtUtc,
+                IsCurrentUserHost = game.IsCurrentUserHost
+            }).ToList()
         });
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CancelActive(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await gameService.CancelActiveGameAsync(CurrentUserId, id, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.GameCancelledEvent, id, cancellationToken);
+        }
+        catch (UnauthorizedAccessException) { return Forbid(); }
+        catch (InvalidOperationException exception) { TempData["Error"] = exception.Message; }
+        return RedirectToAction(nameof(Index));
     }
 
     [HttpGet]

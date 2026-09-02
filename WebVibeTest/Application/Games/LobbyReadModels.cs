@@ -10,6 +10,14 @@ public sealed record AvailableGame(
     int MaxPlayers,
     bool IsMember);
 
+public sealed record ActiveGameSummary(
+    Guid Id,
+    string Name,
+    string HostName,
+    int PlayerCount,
+    DateTime StartedAtUtc,
+    bool IsCurrentUserHost);
+
 public sealed record WaitingLobby(
     Guid Id,
     string Name,

@@ -12,6 +12,7 @@ public sealed class GameHub(IGameService gameService, InMemoryGameChat gameChat)
     public const string LobbyUpdatedEvent = "LobbyUpdated";
     public const string GameStartedEvent = "GameStarted";
     public const string GameStateUpdatedEvent = "GameStateUpdated";
+    public const string GameCancelledEvent = "GameCancelled";
     public const string DiceRolledEvent = "DiceRolled";
     public const string ResourceProductionEvent = "ResourceProduction";
     public const string ResourceCardsReceivedEvent = "ResourceCardsReceived";

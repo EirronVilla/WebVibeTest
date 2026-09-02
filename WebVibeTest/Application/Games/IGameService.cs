@@ -5,6 +5,8 @@ namespace WebVibeTest.Application.Games;
 public interface IGameService
 {
     Task<IReadOnlyList<AvailableGame>> GetAvailablePublicGamesAsync(string userId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ActiveGameSummary>> GetActiveGamesAsync(string userId, CancellationToken cancellationToken = default);
+    Task CancelActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task SelectPlayerColorAsync(string userId, Guid gameId, PlayerColor color, CancellationToken cancellationToken = default);
     Task StartGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
