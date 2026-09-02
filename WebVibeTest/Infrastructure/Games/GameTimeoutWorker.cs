@@ -33,22 +33,27 @@ public sealed class GameTimeoutWorker(
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var now = DateTime.UtcNow;
         var cutoff = now.AddHours(-24);
-        var games = await db.Games.Where(game => game.Status == GameStatus.InProgress && game.StartedAt <= cutoff)
+        var gameIds = await db.Games.AsNoTracking().Where(game => game.Status == GameStatus.InProgress && game.StartedAt <= cutoff)
+            .Select(game => game.Id)
             .ToListAsync(cancellationToken);
-        foreach (var game in games)
+        foreach (var gameId in gameIds)
         {
+            await using var itemScope = scopeFactory.CreateAsyncScope();
+            var itemDb = itemScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await using var transaction = await itemDb.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            await LockGameAsync(itemDb, gameId, cancellationToken);
+            var game = await itemDb.Games.SingleAsync(game => game.Id == gameId, cancellationToken);
+            if (game.Status != GameStatus.InProgress || game.StartedAt > cutoff) continue;
             game.Status = GameStatus.Cancelled;
             game.FinishedAt = now;
             game.ActionDeadlineUtc = null;
+            var offers = await itemDb.TradeOffers.Where(offer => offer.GameId == gameId && offer.Status == TradeStatus.Open)
+                .ToListAsync(cancellationToken);
+            foreach (var offer in offers) offer.Status = TradeStatus.Cancelled;
+            await itemDb.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(gameId)).SendAsync(GameHub.GameCancelledEvent, gameId, cancellationToken);
         }
-        if (games.Count == 0) return;
-        var gameIds = games.Select(game => game.Id).ToList();
-        var offers = await db.TradeOffers.Where(offer => gameIds.Contains(offer.GameId) && offer.Status == TradeStatus.Open)
-            .ToListAsync(cancellationToken);
-        foreach (var offer in offers) offer.Status = TradeStatus.Cancelled;
-        await db.SaveChangesAsync(cancellationToken);
-        foreach (var game in games)
-            await hubContext.Clients.Group(GameHub.GroupName(game.Id)).SendAsync(GameHub.GameCancelledEvent, game.Id, cancellationToken);
     }
 
     private async Task ResolveExpiredTradesAsync(CancellationToken cancellationToken)
@@ -56,13 +61,23 @@ public sealed class GameTimeoutWorker(
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var now = DateTime.UtcNow;
-        var offers = await db.TradeOffers.Include(offer => offer.Responses)
+        var offerIds = await db.TradeOffers.AsNoTracking()
             .Where(offer => offer.Game.Status == GameStatus.InProgress && offer.Status == TradeStatus.Open && offer.ResponseDeadlineUtc <= now
                 && offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending))
+            .Select(offer => new { offer.Id, offer.GameId })
             .ToListAsync(cancellationToken);
-        foreach (var offer in offers)
+        foreach (var candidate in offerIds)
         {
-            var players = await db.GamePlayers.Where(player => player.GameId == offer.GameId)
+            await using var itemScope = scopeFactory.CreateAsyncScope();
+            var itemDb = itemScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await using var transaction = await itemDb.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+            await LockGameAsync(itemDb, candidate.GameId, cancellationToken);
+            var game = await itemDb.Games.SingleAsync(game => game.Id == candidate.GameId, cancellationToken);
+            if (game.Status != GameStatus.InProgress) continue;
+            var offer = await itemDb.TradeOffers.Include(offer => offer.Responses)
+                .SingleOrDefaultAsync(offer => offer.Id == candidate.Id && offer.Status == TradeStatus.Open, cancellationToken);
+            if (offer is null || offer.ResponseDeadlineUtc > DateTime.UtcNow) continue;
+            var players = await itemDb.GamePlayers.Where(player => player.GameId == offer.GameId)
                 .ToDictionaryAsync(player => player.UserId, cancellationToken);
             foreach (var response in offer.Responses.Where(response => response.Status == TradeResponseStatus.Pending))
             {
@@ -71,9 +86,9 @@ public sealed class GameTimeoutWorker(
                     : TradeResponseStatus.Rejected;
                 response.RespondedAt = now;
             }
-            var game = await db.Games.SingleAsync(game => game.Id == offer.GameId, cancellationToken);
             game.ActionDeadlineUtc = now.AddMinutes(1);
-            await db.SaveChangesAsync(cancellationToken);
+            await itemDb.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             await hubContext.Clients.Group(GameHub.GroupName(offer.GameId))
                 .SendAsync(GameHub.GameStateUpdatedEvent, offer.GameId, cancellationToken);
         }
@@ -111,7 +126,10 @@ public sealed class GameTimeoutWorker(
     private static async Task ApplyRobberPenaltyAsync(ApplicationDbContext db, Guid gameId, string playerUserId, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear();
+        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
+        await LockGameAsync(db, gameId, cancellationToken);
         var game = await db.Games.Include(game => game.Players).SingleAsync(game => game.Id == gameId, cancellationToken);
+        if (game.Status != GameStatus.InProgress || game.Phase is not (GamePhase.AwaitingDiscards or GamePhase.AwaitingRobberPlacement)) return;
         var board = JsonSerializer.Deserialize<Domain.Board.BoardState>(game.BoardStateJson!)!;
         var target = board.Hexes.Where(hex => hex.Id != board.RobberHexId)
             .OrderByDescending(hex => hex.VertexIds.Count(vertexId => board.Vertices[vertexId].Settlement?.UserId == playerUserId))
@@ -121,10 +139,14 @@ public sealed class GameTimeoutWorker(
         game.BoardStateJson = JsonSerializer.Serialize(board);
         game.Phase = GamePhase.TurnActions;
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         db.ChangeTracker.Clear();
     }
 
     private static bool CanAfford(GamePlayer player, TradeOffer offer) =>
         player.Brick >= offer.RequestedBrick && player.Lumber >= offer.RequestedLumber
         && player.Wool >= offer.RequestedWool && player.Grain >= offer.RequestedGrain && player.Ore >= offer.RequestedOre;
+
+    private static Task LockGameAsync(ApplicationDbContext db, Guid gameId, CancellationToken cancellationToken) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Games\" WHERE \"Id\" = {gameId} FOR UPDATE", cancellationToken);
 }

@@ -50,6 +50,8 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
     public async Task CancelActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
     {
         EnsureAuthenticated(userId);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await LockGameAsync(gameId, cancellationToken);
         var game = await dbContext.Games.SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("The game was not found.");
         if (game.HostUserId != userId) throw new UnauthorizedAccessException("Only the host may cancel an active game.");
@@ -57,7 +59,12 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         game.Status = GameStatus.Cancelled;
         game.FinishedAt = DateTime.UtcNow;
         game.ActionDeadlineUtc = null;
+        var openOffers = await dbContext.TradeOffers
+            .Where(offer => offer.GameId == gameId && offer.Status == TradeStatus.Open)
+            .ToListAsync(cancellationToken);
+        foreach (var offer in openOffers) offer.Status = TradeStatus.Cancelled;
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
@@ -1067,12 +1074,6 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         EnsureAuthenticated(userId);
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
 
-        // Take the shared-offer lock before the serializable transaction performs
-        // any other reads, ensuring a waiter receives a snapshot that includes the
-        // preceding player's committed response.
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM \"TradeOffers\" WHERE \"Id\" = {offerId} AND \"GameId\" = {gameId} FOR UPDATE",
-            cancellationToken);
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         if (game.Phase != GamePhase.TurnActions || game.CurrentPlayerUserId is null)
@@ -1170,10 +1171,18 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         return new MaritimeTradeResult(give, rate, receive);
     }
 
-    private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken) =>
-        await dbContext.Games.Include(game => game.Players)
+    private async Task<Game> LoadActiveGameAsync(Guid gameId, CancellationToken cancellationToken)
+    {
+        await LockGameAsync(gameId, cancellationToken);
+        return await dbContext.Games.Include(game => game.Players)
             .SingleOrDefaultAsync(game => game.Id == gameId, cancellationToken)
             ?? throw new InvalidOperationException("The game was not found.");
+    }
+
+    private Task LockGameAsync(Guid gameId, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"Games\" WHERE \"Id\" = {gameId} FOR UPDATE",
+            cancellationToken);
 
     private async Task<TradeOffer> LoadOpenTradeOfferAsync(Guid gameId, Guid offerId, CancellationToken cancellationToken) =>
         await dbContext.TradeOffers.Include(offer => offer.Responses)
@@ -1409,7 +1418,12 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         game.Status = GameStatus.Completed;
         game.Phase = GamePhase.Completed;
         game.FinishedAt = DateTime.UtcNow;
+        game.ActionDeadlineUtc = null;
         game.WinnerUserId = winner.Key;
+        var openOffers = await dbContext.TradeOffers
+            .Where(offer => offer.GameId == game.Id && offer.Status == TradeStatus.Open)
+            .ToListAsync(cancellationToken);
+        foreach (var offer in openOffers) offer.Status = TradeStatus.Cancelled;
         var ordered = scores.OrderByDescending(x => x.Value).ThenBy(x => game.Players.Single(p => p.UserId == x.Key).TurnOrder).ToList();
         for (var i = 0; i < ordered.Count; i++)
         {
