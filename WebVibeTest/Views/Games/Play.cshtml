@@ -24,6 +24,11 @@
     var svgBounds = BoardSvgBounds.From(board);
     var viewBox = $"{F(svgBounds.MinX)} {F(svgBounds.MinY)} {F(svgBounds.Width)} {F(svgBounds.Height)}";
     var currentPlayerShortName = Model.CurrentPlayerName.Split('@')[0];
+    var readyTrade = Model.Trading.Offers.FirstOrDefault(offer =>
+        offer.IsProposer
+        && offer.Responses.Count > 0
+        && offer.Responses.All(response => response.Status != TradeResponseStatus.Pending)
+        && offer.Responses.Any(response => response.Status == TradeResponseStatus.Accepted));
 }
 
 @section Styles {
@@ -295,8 +300,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 <div class="modal fade" id="trade-rejected-modal" tabindex="-1" aria-labelledby="trade-rejected-title" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-5" id="trade-rejected-title">Trade update</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">All players have rejected the trade offer.</div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div></div></div>
 </div>
-<div class="modal fade" id="trade-ready-modal" tabindex="-1" aria-labelledby="trade-ready-title" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-5" id="trade-ready-title">Choose a trade to finalize</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p>All players have responded. Select one accepted player to exchange resources with.</p><select id="trade-ready-partner" class="form-select"></select></div><div class="modal-footer"><button type="button" id="cancel-ready-trade" class="btn btn-outline-danger">Cancel trade</button><button type="button" id="finalize-ready-trade" class="btn btn-success">Accept selected trade</button></div></div></div>
+<div class="modal fade" id="trade-ready-modal" tabindex="-1" aria-labelledby="trade-ready-title" aria-hidden="true" data-ready-offer-id="@readyTrade?.Id">
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-5" id="trade-ready-title">Choose a trade to finalize</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p>All players have responded. Select one accepted player to exchange resources with.</p><select id="trade-ready-partner" class="form-select">@if (readyTrade is not null) { @foreach (var response in readyTrade.Responses.Where(response => response.Status == TradeResponseStatus.Accepted)) { <option value="@response.UserId">@response.DisplayName.Split('@')[0]</option> } }</select></div><div class="modal-footer"><button type="button" id="cancel-ready-trade" class="btn btn-outline-danger">Cancel trade</button><button type="button" id="finalize-ready-trade" class="btn btn-success">Accept selected trade</button></div></div></div>
 </div>
 
 <div class="modal fade" id="placement-confirmation-modal" tabindex="-1" aria-labelledby="placement-confirmation-title" aria-hidden="true">
@@ -754,7 +759,9 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const placementPieceName = document.getElementById('placement-piece-name');
             const incomingTradeModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('incoming-trade-modal'));
             let incomingOfferId = null;
-            let readyOfferId = null;
+            const tradeReadyModalElement = document.getElementById('trade-ready-modal');
+            const tradeReadyModal = bootstrap.Modal.getOrCreateInstance(tradeReadyModalElement);
+            let readyOfferId = tradeReadyModalElement.dataset.readyOfferId || null;
             const tradeText = bundle => Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `${amount} ${resource}`).join(', ');
             const canAffordRequested = bundle => Object.entries(bundle).every(([resource, amount]) => ownResources[resource[0].toUpperCase() + resource.slice(1)] >= amount);
             const cardImages = { brick: 'brick_card.png', lumber: 'wood_card.png', wool: 'sheep_card.png', grain: 'wheat_card.png', ore: 'rock_card.png' };
@@ -976,15 +983,15 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 readyOfferId = event.offerId;
                 const select = document.getElementById('trade-ready-partner');
                 select.innerHTML = (event.acceptedUserIds || []).map(id => `<option value="${id}">${event.acceptedNames?.[id] || id}</option>`).join('');
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).show();
+                tradeReadyModal.show();
             });
             document.getElementById('finalize-ready-trade').addEventListener('click', () => {
                 const acceptingUserId = document.getElementById('trade-ready-partner').value;
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).hide();
+                tradeReadyModal.hide();
                 postCommand('@Url.Action("FinalizeTrade", "Games")', { offerId: readyOfferId, acceptingUserId });
             });
             document.getElementById('cancel-ready-trade').addEventListener('click', () => {
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-ready-modal')).hide();
+                tradeReadyModal.hide();
                 postCommand('@Url.Action("CancelTrade", "Games")', { offerId: readyOfferId });
             });
             document.querySelectorAll('.incoming-trade-response').forEach(button => button.addEventListener('click', () => {
@@ -1005,6 +1012,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 try {
                     await connection.start();
                     await connection.invoke('JoinLobby', gameId);
+                    if (readyOfferId) tradeReadyModal.show();
                 } catch {
                     window.setTimeout(connect, 3000);
                 }
