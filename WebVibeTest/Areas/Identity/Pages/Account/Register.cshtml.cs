@@ -20,8 +20,9 @@ public sealed class RegisterModel(UserManager<IdentityUser> userManager, SignInM
         [RegularExpression(@"^[A-Za-z0-9_.-]+$", ErrorMessage = "Use letters, numbers, dots, dashes, or underscores only.")]
         public string Username { get; set; } = string.Empty;
 
-        [Required, EmailAddress]
-        public string Email { get; set; } = string.Empty;
+        [EmailAddress]
+        [Display(Name = "Email (optional)")]
+        public string? Email { get; set; }
 
         [Required, DataType(DataType.Password)]
         public string Password { get; set; } = string.Empty;
@@ -38,7 +39,8 @@ public sealed class RegisterModel(UserManager<IdentityUser> userManager, SignInM
         ReturnUrl = returnUrl;
         if (!ModelState.IsValid) return Page();
 
-        var user = new IdentityUser { UserName = Input.Username.Trim(), Email = Input.Email.Trim() };
+        var email = string.IsNullOrWhiteSpace(Input.Email) ? null : Input.Email.Trim();
+        var user = new IdentityUser { UserName = Input.Username.Trim(), Email = email };
         var result = await userManager.CreateAsync(user, Input.Password);
         if (result.Succeeded)
         {

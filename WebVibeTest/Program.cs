@@ -65,7 +65,8 @@ public static class Program
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
             options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
         });
-        builder.Services.AddScoped<IGameService, GameService>();
+        builder.Services.AddScoped<GameService>();
+        builder.Services.AddScoped<IGameService, ExecutionStrategyGameService>();
         builder.Services.AddSingleton<IGameActionLog, InMemoryGameActionLog>();
         builder.Services.AddHealthChecks();
 
