@@ -39,6 +39,19 @@
     line-height: 1.25;
     text-transform: uppercase;
 }
+.gameplay-container .trade-waiting-label {
+    grid-column: 2 / 4;
+    padding: .1rem .4rem;
+    border: 1px solid #7c5a18;
+    border-radius: 999px;
+    color: #4d350d;
+    background: #fff0a3;
+    font-size: .66rem;
+    font-weight: 800;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+}
 .your-turn-modal-content { border-width: 3px !important; box-shadow: 0 0 2rem rgba(210,155,25,.65) !important; }
 .your-turn-modal-content .modal-title { width: 100%; color: #7c1717; font: 800 clamp(1.65rem, 4vw, 2.35rem) Georgia, "Times New Roman", serif; text-align: center; }
 .your-turn-dice { margin-bottom: .55rem; color: #60420f; font-size: 3rem; letter-spacing: .25rem; line-height: 1; }

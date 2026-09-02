@@ -88,7 +88,8 @@ public sealed record ResourceBundle(int Brick, int Lumber, int Wool, int Grain, 
 public sealed record TradingReadModel(
     IReadOnlyList<TradeOfferReadModel> Offers,
     IReadOnlyDictionary<ResourceType, int> MaritimeRates,
-    int OffersRemainingThisTurn);
+    int OffersRemainingThisTurn,
+    string? WaitingForTradeUserId);
 
 public sealed record TradeOfferReadModel(
     Guid Id,

@@ -24,6 +24,8 @@
     var svgBounds = BoardSvgBounds.From(board);
     var viewBox = $"{F(svgBounds.MinX)} {F(svgBounds.MinY)} {F(svgBounds.Width)} {F(svgBounds.Height)}";
     var currentPlayerShortName = Model.CurrentPlayerName.Split('@')[0];
+    var currentUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+    var isWaitingForTrade = Model.Trading.WaitingForTradeUserId == currentUserId;
     var readyTrade = Model.Trading.Offers.FirstOrDefault(offer =>
         offer.IsProposer
         && offer.Responses.Count > 0
@@ -51,13 +53,17 @@
         {
             var player = Model.Players[playerIndex];
             var shortName = player.DisplayName.Split('@')[0];
-            <button type="button" class="player-mini player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)" data-bs-toggle="modal" data-bs-target="#player-modal-@playerIndex">
+            <button type="button" class="player-mini player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)" data-player-user-id="@player.UserId" data-bs-toggle="modal" data-bs-target="#player-modal-@playerIndex">
                 @if (player.IsCurrentPlayer)
                 {
                     <span class="active-turn-label">Current turn</span>
                 }
                 <span class="profile-placeholder" aria-hidden="true">♙</span>
                 <span class="player-mini-name">@shortName</span>
+                @if (Model.Trading.WaitingForTradeUserId == player.UserId)
+                {
+                    <span class="trade-waiting-label">Waiting for trade</span>
+                }
                 <span class="player-mini-awards"><span class="vp-seal">@player.VisibleVictoryPoints VP</span>@if (Model.Awards.LongestRoadHolderUserId == player.UserId) { <span class="award-chip" title="Longest Road">LR</span> }@if (Model.Awards.LargestArmyHolderUserId == player.UserId) { <span class="award-chip" title="Largest Army">LA</span> }</span>
             </button>
             <div class="modal fade renaissance-modal" id="player-modal-@playerIndex" tabindex="-1" aria-labelledby="player-modal-title-@playerIndex" aria-hidden="true">
@@ -86,10 +92,10 @@
 
 <section class="action-ribbon mb-3">
     <div class="action-ribbon-left">
-        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#buy-development-modal" @(Model.DevelopmentCards.CanBuy ? null : "disabled")>Buy Development Card</button>
-        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#build-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Build</button>
-        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#player-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Trade with players</button>
-        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#maritime-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Maritime Trade</button>
+        <button class="btn renaissance-button" data-blocked-by-trade data-bs-toggle="modal" data-bs-target="#buy-development-modal" @(Model.DevelopmentCards.CanBuy ? null : "disabled")>Buy Development Card</button>
+        <button class="btn renaissance-button" data-blocked-by-trade data-bs-toggle="modal" data-bs-target="#build-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions && !isWaitingForTrade ? null : "disabled")>Build</button>
+        <button class="btn renaissance-button" data-blocked-by-trade data-bs-toggle="modal" data-bs-target="#player-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions && !isWaitingForTrade ? null : "disabled")>Trade with players</button>
+        <button class="btn renaissance-button" data-blocked-by-trade data-bs-toggle="modal" data-bs-target="#maritime-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions && !isWaitingForTrade ? null : "disabled")>Maritime Trade</button>
     </div>
     <div class="action-ribbon-right">
         @if (Model.LatestDie1 is int die1 && Model.LatestDie2 is int die2)
@@ -102,7 +108,7 @@
         }
         @if (Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions)
         {
-            <button type="button" id="end-turn" class="btn btn-danger">End turn</button>
+            <button type="button" id="end-turn" data-blocked-by-trade class="btn btn-danger" @(isWaitingForTrade ? "disabled" : null)>End turn</button>
         }
     </div>
 </section>
@@ -214,7 +220,7 @@
                 </div>
             </div>
         </div>
-        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="propose-trade" class="btn btn-success" @(Model.Trading.OffersRemainingThisTurn > 0 ? null : "disabled")>Make offer to all players <small>(@Model.Trading.OffersRemainingThisTurn remaining)</small></button></div>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="propose-trade" data-blocked-by-trade class="btn btn-success" @(Model.Trading.OffersRemainingThisTurn > 0 && !isWaitingForTrade ? null : "disabled")>Make offer to all players <small>(@Model.Trading.OffersRemainingThisTurn remaining)</small></button></div>
     </div></div></div>
 
     <div class="modal fade renaissance-modal" id="maritime-trade-modal" tabindex="-1" aria-labelledby="maritime-trade-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
@@ -231,7 +237,7 @@
                 @foreach (var resource in Enum.GetValues<ResourceType>()) { <option value="@resource">@resource</option> }
             </select></div>
         </div>
-        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="maritime-trade" class="btn btn-info">Trade with bank</button></div>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="maritime-trade" data-blocked-by-trade class="btn btn-info" @(isWaitingForTrade ? "disabled" : null)>Trade with bank</button></div>
     </div></div></div>
 }
 
@@ -282,7 +288,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             <p class="mt-3 mb-1">Spend <strong>1 Ore, 1 Wool, and 1 Grain</strong> to draw one random development card?</p>
             <small class="text-muted">The card identity will remain private to you.</small>
         </div>
-        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="confirm-buy-development" class="btn btn-warning">Confirm purchase</button></div>
+        <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="confirm-buy-development" data-blocked-by-trade class="btn btn-warning" @(isWaitingForTrade ? "disabled" : null)>Confirm purchase</button></div>
     </div></div>
 </div>
 
@@ -558,7 +564,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                             {
                                 <select class="form-select form-select-sm dev-resource">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
                             }
-                            <button type="button" class="btn btn-sm btn-warning mt-1 play-development" data-card-type="@card.Type">Use card</button>
+                            <button type="button" class="btn btn-sm btn-warning mt-1 play-development" data-blocked-by-trade data-card-type="@card.Type">Use card</button>
                         }
                     </div>
                 }
@@ -769,6 +775,22 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 const host = document.getElementById(elementId);
                 host.innerHTML = Object.entries(bundle).filter(([, amount]) => amount > 0).map(([resource, amount]) => `<div class="trade-card"><img src="/img/cards/${cardImages[resource]}" alt="${resource}" /><span>${amount}</span></div>`).join('');
             };
+            const setTradeWaiting = (userId, waiting) => {
+                const player = document.querySelector(`[data-player-user-id="${CSS.escape(userId)}"]`);
+                if (player) {
+                    let label = player.querySelector('.trade-waiting-label');
+                    if (waiting && !label) {
+                        label = document.createElement('span');
+                        label.className = 'trade-waiting-label';
+                        label.textContent = 'Waiting for trade';
+                        player.querySelector('.player-mini-awards')?.before(label);
+                    } else if (!waiting) {
+                        label?.remove();
+                    }
+                }
+                if (userId === currentUserId)
+                    document.querySelectorAll('[data-blocked-by-trade]').forEach(button => button.disabled = waiting);
+            };
 
             const restoreProductionAnimations = () => {
                 const diceTotal = Number(sessionStorage.getItem(productionTileKey));
@@ -965,7 +987,9 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 if (wasNearEnd) scrollActionLogToEnd();
             });
             connection.on('TradeOffered', offer => {
-                if (offer.gameId.toLowerCase() !== gameId.toLowerCase() || offer.proposerUserId === currentUserId) return;
+                if (offer.gameId.toLowerCase() !== gameId.toLowerCase()) return;
+                setTradeWaiting(offer.proposerUserId, true);
+                if (offer.proposerUserId === currentUserId) return;
                 incomingOfferId = offer.offerId;
                 document.getElementById('incoming-trade-summary').textContent = `You give: ${tradeText(offer.requested)} · You receive: ${tradeText(offer.offered)}`;
                 renderTradeCards('incoming-trade-give', offer.requested);
@@ -976,10 +1000,14 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 incomingTradeModal.show();
             });
             connection.on('TradeAllRejected', event => {
-                if (event.gameId.toLowerCase() === gameId.toLowerCase()) bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-rejected-modal')).show();
+                if (event.gameId.toLowerCase() === gameId.toLowerCase()) {
+                    setTradeWaiting(currentUserId, false);
+                    bootstrap.Modal.getOrCreateInstance(document.getElementById('trade-rejected-modal')).show();
+                }
             });
             connection.on('TradeReady', event => {
                 if (event.gameId.toLowerCase() !== gameId.toLowerCase()) return;
+                setTradeWaiting(currentUserId, false);
                 readyOfferId = event.offerId;
                 const select = document.getElementById('trade-ready-partner');
                 select.innerHTML = (event.acceptedUserIds || []).map(id => `<option value="${id}">${event.acceptedNames?.[id] || id}</option>`).join('');

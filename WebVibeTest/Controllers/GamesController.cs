@@ -502,6 +502,11 @@ public sealed class GamesController(
                 await hubContext.Clients.User(result.ProposerUserId).SendAsync(GameHub.TradeReadyEvent, new { gameId = id, offerId, acceptedUserIds = result.AcceptedUserIds, acceptedNames }, cancellationToken);
             }
             await hubContext.Clients.Users(result.ParticipantUserIds).SendAsync(GameHub.TradeRespondedEvent, new { gameId = id, result.OfferId, accept }, cancellationToken);
+            if (result.AllResponded)
+            {
+                await hubContext.Clients.Group(GameHub.GroupName(id))
+                    .SendAsync(GameHub.GameStateUpdatedEvent, id, cancellationToken);
+            }
             return Ok();
         }
         catch (UnauthorizedAccessException) { return Forbid(); }

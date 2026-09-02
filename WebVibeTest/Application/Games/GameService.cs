@@ -339,7 +339,14 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
             && vertex.Settlement.BuildingType == BuildingType.Settlement);
         var ownCityCount = board.Vertices.Count(vertex => vertex.Settlement?.UserId == userId
             && vertex.Settlement.BuildingType == BuildingType.City);
-        var canConstruct = isCurrentPlayer && game.Phase == GamePhase.TurnActions;
+        var waitingForTradeUserId = await dbContext.TradeOffers.AsNoTracking()
+            .Where(offer => offer.GameId == gameId && offer.Status == TradeStatus.Open
+                && offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending))
+            .OrderBy(offer => offer.CreatedAt)
+            .Select(offer => offer.ProposerUserId)
+            .FirstOrDefaultAsync(cancellationToken);
+        var isWaitingForTrade = waitingForTradeUserId == userId;
+        var canConstruct = isCurrentPlayer && game.Phase == GamePhase.TurnActions && !isWaitingForTrade;
         var construction = new ConstructionReadModel(
             15 - ownRoadCount,
             5 - ownSettlementCount,
@@ -373,7 +380,8 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
                     : []))
                 .ToList(),
             GetMaritimeRates(board, userId),
-            Math.Max(0, 10 - await dbContext.TradeOffers.AsNoTracking().CountAsync(offer => offer.GameId == gameId && offer.TurnNumber == game.TurnNumber, cancellationToken)));
+            Math.Max(0, 10 - await dbContext.TradeOffers.AsNoTracking().CountAsync(offer => offer.GameId == gameId && offer.TurnNumber == game.TurnNumber, cancellationToken)),
+            waitingForTradeUserId);
         var eligibleTargets = game.Phase == GamePhase.AwaitingRobberyTarget && isCurrentPlayer
             ? GetEligibleRobberyTargets(game, board)
                 .Select(player => new RobberyTarget(player.UserId, userNames.GetValueOrDefault(player.UserId, "Unknown")))
@@ -423,12 +431,12 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
                     .Select(card => new DevelopmentCardReadModel(
                         card.Id,
                         card.Type,
-                        CanPlayDevelopmentCard(game, userId, card),
+                        !isWaitingForTrade && CanPlayDevelopmentCard(game, userId, card),
                         card.PurchasedTurnNumber == game.TurnNumber))
                     .ToList(),
                 deck.Count,
                 new ResourceInventory(bank.Brick, bank.Lumber, bank.Wool, bank.Grain, bank.Ore),
-                isCurrentPlayer && game.Phase == GamePhase.TurnActions && deck.Count > 0
+                isCurrentPlayer && game.Phase == GamePhase.TurnActions && !isWaitingForTrade && deck.Count > 0
                     && ownPlayer.Ore > 0 && ownPlayer.Wool > 0 && ownPlayer.Grain > 0,
                 ownPlayer.VisibleVictoryPoints
                     + cards.Count(card => card.OwnerUserId == userId && card.Type == DevelopmentCardType.VictoryPoint)
@@ -699,6 +707,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "The turn cannot end before production and robber resolution are complete.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var players = game.Players.OrderBy(player => player.TurnOrder).ToList();
         game.PrimaryPlayerUserId ??= game.CurrentPlayerUserId;
         if (players.Count >= 5 && !game.IsSecondaryActionPhase)
@@ -739,6 +748,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Roads may only be built by the active player during turn actions.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var board = DeserializeBoard(game.BoardStateJson!);
         var edge = board.Edges.SingleOrDefault(candidate => candidate.Id == edgeId)
             ?? throw new ArgumentException("The selected edge does not exist.", nameof(edgeId));
@@ -769,6 +779,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Settlements may only be built by the active player during turn actions.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var board = DeserializeBoard(game.BoardStateJson!);
         var vertex = board.Vertices.SingleOrDefault(candidate => candidate.Id == vertexId)
             ?? throw new ArgumentException("The selected intersection does not exist.", nameof(vertexId));
@@ -803,6 +814,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Cities may only be built by the active player during turn actions.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var board = DeserializeBoard(game.BoardStateJson!);
         var vertex = board.Vertices.SingleOrDefault(candidate => candidate.Id == vertexId)
             ?? throw new ArgumentException("The selected intersection does not exist.", nameof(vertexId));
@@ -834,6 +846,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Development cards may only be bought during the active player's action phase.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var deck = string.IsNullOrWhiteSpace(game.DevelopmentDeckJson)
             ? CreateDevelopmentDeck(game.Players.Count)
             : DeserializeDeck(game.DevelopmentDeckJson);
@@ -984,6 +997,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Trades may only be proposed by the active player during turn actions.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         if (game.Players.Count >= 5 && game.IsSecondaryActionPhase) throw new InvalidOperationException("The secondary action player may not propose player-to-player trades.");
         if (await dbContext.TradeOffers.CountAsync(offer => offer.GameId == gameId && offer.TurnNumber == game.TurnNumber, cancellationToken) >= 10)
             throw new InvalidOperationException("Only 10 player trade offers are allowed per turn.");
@@ -1075,6 +1089,8 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Only the active player may cancel a trade during turn actions.");
         var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
         if (offer.ProposerUserId != userId) throw new UnauthorizedAccessException("Only the proposer may cancel this trade.");
+        if (offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending))
+            throw new InvalidOperationException("Wait until all players have responded before cancelling the trade.");
         offer.Status = TradeStatus.Cancelled;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -1091,6 +1107,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Maritime trades are only allowed during the active player's turn actions.");
+        await EnsureNotWaitingForTradeAsync(gameId, userId, cancellationToken);
         var board = DeserializeBoard(game.BoardStateJson!);
         var rate = GetMaritimeRates(board, userId)[give];
         var player = game.Players.Single(candidate => candidate.UserId == userId);
@@ -1297,6 +1314,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         EnsureAuthenticated(userId);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.TurnActions, "Development cards may only be played by the active player during turn actions.");
+        await EnsureNotWaitingForTradeAsync(game.Id, userId, cancellationToken);
         if (game.DevelopmentCardPlayedThisTurn) throw new InvalidOperationException("Only one development card may be played per turn.");
         var card = await dbContext.DevelopmentCards.SingleOrDefaultAsync(candidate => candidate.Id == cardId && candidate.GameId == game.Id, cancellationToken)
             ?? throw new InvalidOperationException("The development card was not found.");
@@ -1305,6 +1323,18 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         if (card.PurchasedTurnNumber >= game.TurnNumber)
             throw new InvalidOperationException("A development card cannot be played on the turn it was purchased.");
         return card;
+    }
+
+    private async Task EnsureNotWaitingForTradeAsync(Guid gameId, string userId, CancellationToken cancellationToken)
+    {
+        var isWaiting = await dbContext.TradeOffers.AnyAsync(
+            offer => offer.GameId == gameId
+                && offer.ProposerUserId == userId
+                && offer.Status == TradeStatus.Open
+                && offer.Responses.Any(response => response.Status == TradeResponseStatus.Pending),
+            cancellationToken);
+        if (isWaiting)
+            throw new InvalidOperationException("Wait for every player to accept or reject the current trade offer before taking another action.");
     }
 
     private static bool CanPlayDevelopmentCard(Game game, string userId, DevelopmentCard card) =>
