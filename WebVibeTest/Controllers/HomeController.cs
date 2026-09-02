@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using WebVibeTest.Application.Games;
 using WebVibeTest.Infrastructure.Data;
 using WebVibeTest.Infrastructure.Identity;
+using WebVibeTest.Infrastructure.Files;
 using WebVibeTest.Models;
 
 namespace WebVibeTest.Controllers;
@@ -15,7 +16,7 @@ public sealed class HomeController(
     UserManager<IdentityUser> userManager,
     IGameService gameService,
     ApplicationDbContext dbContext,
-    IWebHostEnvironment environment) : Controller
+    ProfileImageStorage profileImageStorage) : Controller
 {
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
@@ -58,10 +59,9 @@ public sealed class HomeController(
         }
 
         var userId = userManager.GetUserId(User) ?? throw new UnauthorizedAccessException();
-        var relativePath = $"/uploads/profiles/{userId}-{Guid.NewGuid():N}{extension}";
-        var directory = Path.Combine(environment.WebRootPath, "uploads", "profiles");
-        Directory.CreateDirectory(directory);
-        var absolutePath = Path.Combine(environment.WebRootPath, relativePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+        var fileName = $"{userId}-{Guid.NewGuid():N}{extension}";
+        var relativePath = $"{ProfileImageStorage.RequestPath}/{fileName}";
+        var absolutePath = Path.Combine(profileImageStorage.RootPath, fileName);
 
         await using (var stream = new FileStream(absolutePath, FileMode.CreateNew))
         {

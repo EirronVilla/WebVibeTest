@@ -1,0 +1,12 @@
+.git
+.github
+.vs
+.idea
+.data
+**/bin
+**/obj
+**/TestResults
+**/*.user
+**/*.suo
+WebVibeTest.Tests
+RENDER_ENVIRONMENT.local.md
