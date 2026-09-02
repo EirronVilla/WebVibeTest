@@ -323,6 +323,10 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
         var userNames = await dbContext.Users
             .Where(identity => playerUserIds.Contains(identity.Id))
             .ToDictionaryAsync(identity => identity.Id, identity => identity.UserName ?? identity.Email ?? identity.Id, cancellationToken);
+        var profileImagePaths = await dbContext.UserProfiles
+            .AsNoTracking()
+            .Where(profile => playerUserIds.Contains(profile.UserId) && profile.ProfileImagePath != null)
+            .ToDictionaryAsync(profile => profile.UserId, profile => profile.ProfileImagePath!, cancellationToken);
         var ownPlayer = game.Players.Single(player => player.UserId == userId);
         var awardNames = new Dictionary<string, string>();
         foreach (var identity in userNames) awardNames[identity.Key] = identity.Value;
@@ -403,6 +407,7 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
                 .Select(player => new PublicPlayerState(
                     player.UserId,
                     userNames.GetValueOrDefault(player.UserId, "Unknown"),
+                    profileImagePaths.GetValueOrDefault(player.UserId),
                     player.Color,
                     player.TotalResources,
                     player.VisibleVictoryPoints

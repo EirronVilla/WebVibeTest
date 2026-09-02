@@ -60,6 +60,7 @@ public sealed record ResourceInventory(int Brick, int Lumber, int Wool, int Grai
 public sealed record PublicPlayerState(
     string UserId,
     string DisplayName,
+    string? ProfileImagePath,
     PlayerColor Color,
     int TotalResources,
     int VisibleVictoryPoints,

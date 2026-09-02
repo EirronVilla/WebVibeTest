@@ -6,7 +6,6 @@ using Microsoft.EntityFrameworkCore;
 using WebVibeTest.Application.Games;
 using WebVibeTest.Infrastructure.Data;
 using WebVibeTest.Infrastructure.Identity;
-using WebVibeTest.Infrastructure.Files;
 using WebVibeTest.Models;
 
 namespace WebVibeTest.Controllers;
@@ -15,8 +14,7 @@ namespace WebVibeTest.Controllers;
 public sealed class HomeController(
     UserManager<IdentityUser> userManager,
     IGameService gameService,
-    ApplicationDbContext dbContext,
-    ProfileImageStorage profileImageStorage) : Controller
+    ApplicationDbContext dbContext) : Controller
 {
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken cancellationToken)
@@ -45,42 +43,58 @@ public sealed class HomeController(
         }
 
         const long maxLength = 5 * 1024 * 1024;
-        var allowedTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["image/jpeg"] = ".jpg",
-            ["image/png"] = ".png",
-            ["image/webp"] = ".webp"
+            "image/jpeg",
+            "image/png",
+            "image/webp"
         };
 
-        if (picture.Length > maxLength || !allowedTypes.TryGetValue(picture.ContentType, out var extension))
+        if (picture.Length > maxLength || !allowedTypes.Contains(picture.ContentType))
         {
             TempData["ProfileError"] = "Upload a JPG, PNG, or WebP image no larger than 5 MB.";
             return RedirectToAction(nameof(Index));
         }
 
         var userId = userManager.GetUserId(User) ?? throw new UnauthorizedAccessException();
-        var fileName = $"{userId}-{Guid.NewGuid():N}{extension}";
-        var relativePath = $"{ProfileImageStorage.RequestPath}/{fileName}";
-        var absolutePath = Path.Combine(profileImageStorage.RootPath, fileName);
-
-        await using (var stream = new FileStream(absolutePath, FileMode.CreateNew))
-        {
-            await picture.CopyToAsync(stream, cancellationToken);
-        }
+        await using var stream = new MemoryStream((int)picture.Length);
+        await picture.CopyToAsync(stream, cancellationToken);
+        var imageData = stream.ToArray();
+        var imagePath = Url.Action(nameof(ProfilePicture), new { id = userId })!;
 
         var profile = await dbContext.UserProfiles.SingleOrDefaultAsync(item => item.UserId == userId, cancellationToken);
         if (profile is null)
         {
-            dbContext.UserProfiles.Add(new UserProfile { UserId = userId, ProfileImagePath = relativePath });
+            dbContext.UserProfiles.Add(new UserProfile
+            {
+                UserId = userId,
+                ProfileImagePath = imagePath,
+                ProfileImageData = imageData,
+                ProfileImageContentType = picture.ContentType
+            });
         }
         else
         {
-            profile.ProfileImagePath = relativePath;
+            profile.ProfileImagePath = imagePath;
+            profile.ProfileImageData = imageData;
+            profile.ProfileImageContentType = picture.ContentType;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
         TempData["ProfileMessage"] = "Portrait updated.";
         return RedirectToAction(nameof(Index));
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> ProfilePicture(string id, CancellationToken cancellationToken)
+    {
+        var image = await dbContext.UserProfiles.AsNoTracking()
+            .Where(profile => profile.UserId == id && profile.ProfileImageData != null)
+            .Select(profile => new { profile.ProfileImageData, profile.ProfileImageContentType })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (image?.ProfileImageData is null) return NotFound();
+        return File(image.ProfileImageData, image.ProfileImageContentType ?? "application/octet-stream");
     }
 
     [AllowAnonymous]

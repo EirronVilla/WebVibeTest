@@ -70,7 +70,14 @@
                 <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
                     <div class="modal-header"><h2 class="modal-title fs-5" id="player-modal-title-@playerIndex">@shortName</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
                     <div class="modal-body text-center">
-                        <div class="profile-placeholder profile-placeholder-large mx-auto">♙</div>
+                        @if (!string.IsNullOrWhiteSpace(player.ProfileImagePath))
+                        {
+                            <img class="player-profile-picture mx-auto" src="@player.ProfileImagePath" alt="Profile picture of @shortName" />
+                        }
+                        else
+                        {
+                            <div class="profile-placeholder profile-placeholder-large mx-auto" aria-label="No profile picture">♙</div>
+                        }
                         <div class="vp-seal d-inline-block my-3">@player.VisibleVictoryPoints victory points</div>
                         <p class="mb-1"><strong>Resource cards:</strong> @player.TotalResources</p>
                         <p><strong>Development cards:</strong> @player.DevelopmentCardCount</p>
@@ -598,6 +605,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         border-radius: 50%; color: #70551e; background: #f7edcf; font-size: 1.2rem;
     }
     .profile-placeholder-large { width: 88px; height: 88px; font-size: 3rem; }
+    .player-profile-picture {
+        display: block; width: 88px; height: 88px; border: 2px solid #70551e; border-radius: 50%;
+        background: #f7edcf; object-fit: cover;
+    }
     .vp-seal { padding: .22rem .48rem; border: 2px solid #9a6611; border-radius: 999px; color: #fff9dc; background: #9b1717; font-weight: 800; white-space: nowrap; }
     .player-mini-awards { display: flex; align-items: center; gap: .2rem; }
     .award-chip { display: inline-grid; width: 1.55rem; height: 1.55rem; place-items: center; border: 1px solid #694d18; border-radius: 50%; color: #fff8df; background: #60420f; font-size: .65rem; font-weight: 800; }

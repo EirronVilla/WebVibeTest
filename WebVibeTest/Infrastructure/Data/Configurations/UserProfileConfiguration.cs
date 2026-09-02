@@ -11,6 +11,7 @@ public sealed class UserProfileConfiguration : IEntityTypeConfiguration<UserProf
     {
         builder.HasKey(profile => profile.UserId);
         builder.Property(profile => profile.ProfileImagePath).HasMaxLength(300);
+        builder.Property(profile => profile.ProfileImageContentType).HasMaxLength(50);
         builder.HasOne<IdentityUser>()
             .WithOne()
             .HasForeignKey<UserProfile>(profile => profile.UserId)
