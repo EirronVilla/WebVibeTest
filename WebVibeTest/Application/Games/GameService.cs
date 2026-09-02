@@ -1033,11 +1033,19 @@ public sealed class GameService(ApplicationDbContext dbContext, IGameActionLog a
     {
         EnsureAuthenticated(userId);
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+        // Take the shared-offer lock before the serializable transaction performs
+        // any other reads, ensuring a waiter receives a snapshot that includes the
+        // preceding player's committed response.
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"TradeOffers\" WHERE \"Id\" = {offerId} AND \"GameId\" = {gameId} FOR UPDATE",
+            cancellationToken);
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         if (game.Phase != GamePhase.TurnActions || game.CurrentPlayerUserId is null)
             throw new InvalidOperationException("Trades cannot be answered outside the active player's action phase.");
         if (game.Players.Count >= 5 && game.IsSecondaryActionPhase) throw new InvalidOperationException("Player-to-player trades are unavailable during the paired action phase.");
+
         var offer = await LoadOpenTradeOfferAsync(gameId, offerId, cancellationToken);
         if (offer.ProposerUserId == userId) throw new InvalidOperationException("A player cannot respond to their own trade.");
         if (offer.ProposerUserId != game.CurrentPlayerUserId)
