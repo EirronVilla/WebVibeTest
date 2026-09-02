@@ -47,6 +47,10 @@
             var player = Model.Players[playerIndex];
             var shortName = player.DisplayName.Split('@')[0];
             <button type="button" class="player-mini player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)" data-bs-toggle="modal" data-bs-target="#player-modal-@playerIndex">
+                @if (player.IsCurrentPlayer)
+                {
+                    <span class="active-turn-label">Current turn</span>
+                }
                 <span class="profile-placeholder" aria-hidden="true">♙</span>
                 <span class="player-mini-name">@shortName</span>
                 <span class="player-mini-awards"><span class="vp-seal">@player.VisibleVictoryPoints VP</span>@if (Model.Awards.LongestRoadHolderUserId == player.UserId) { <span class="award-chip" title="Longest Road">LR</span> }@if (Model.Awards.LargestArmyHolderUserId == player.UserId) { <span class="award-chip" title="Largest Army">LA</span> }</span>
@@ -244,6 +248,26 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 
 <div id="placement-error" class="alert alert-danger d-none" role="alert"></div>
 <form id="anti-forgery" class="d-none">@Html.AntiForgeryToken()</form>
+
+@if (Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnProduction)
+{
+    <div class="modal fade renaissance-modal" id="your-turn-modal" tabindex="-1" aria-labelledby="your-turn-title" aria-hidden="true"
+         data-turn-number="@Model.TurnNumber">
+        <div class="modal-dialog modal-dialog-centered"><div class="modal-content your-turn-modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title" id="your-turn-title">Your turn!</h2>
+            </div>
+            <div class="modal-body text-center">
+                <div class="your-turn-dice" aria-hidden="true">⚄ ⚂</div>
+                <p class="mb-0">The realm awaits your command. Roll now, or inspect your resources first.</p>
+            </div>
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Look at resources first</button>
+                <button type="button" id="your-turn-roll" class="btn btn-primary">Roll the dice</button>
+            </div>
+        </div></div>
+    </div>
+}
 
 <div class="modal fade renaissance-modal" id="buy-development-modal" tabindex="-1" aria-labelledby="buy-development-title" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
@@ -797,7 +821,21 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 document.querySelectorAll(`.build-${button.dataset.buildMode}-location`).forEach(location => location.classList.remove('d-none'));
                 button.classList.add('active');
             }));
-            document.getElementById('roll-dice')?.addEventListener('click', () => postCommand('@Url.Action("RollDice", "Games")'));
+            const rollDice = () => postCommand('@Url.Action("RollDice", "Games")');
+            document.getElementById('roll-dice')?.addEventListener('click', rollDice);
+            const yourTurnModalElement = document.getElementById('your-turn-modal');
+            if (yourTurnModalElement) {
+                const yourTurnModal = bootstrap.Modal.getOrCreateInstance(yourTurnModalElement);
+                const promptKey = `catan-your-turn:${gameId}:${currentUserId}:${yourTurnModalElement.dataset.turnNumber}`;
+                if (!sessionStorage.getItem(promptKey)) {
+                    sessionStorage.setItem(promptKey, 'shown');
+                    yourTurnModal.show();
+                }
+                document.getElementById('your-turn-roll').addEventListener('click', async () => {
+                    yourTurnModal.hide();
+                    if (!await rollDice()) yourTurnModal.show();
+                });
+            }
             document.getElementById('end-turn')?.addEventListener('click', () => postCommand('@Url.Action("EndTurn", "Games")'));
             const discardModalElement = document.getElementById('discard-modal');
             if (discardModalElement) {

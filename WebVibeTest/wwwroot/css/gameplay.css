@@ -13,6 +13,44 @@
 .gameplay-container .player-roster { margin-bottom: .45rem !important; padding: .35rem; }
 .gameplay-container .player-roster-grid { gap: .3rem; }
 .gameplay-container .player-mini { min-height: 38px; padding: .2rem .35rem; }
+.gameplay-container .player-mini.active-turn {
+    position: relative;
+    z-index: 2;
+    border: 3px solid #fff0a3;
+    outline: 3px solid #9b1717;
+    outline-offset: 1px;
+    box-shadow: 0 0 0 .3rem rgba(255, 207, 51, .48), 0 0 1.35rem .4rem rgba(155, 23, 23, .72);
+    transform: translateY(-2px) scale(1.025);
+    animation: active-turn-pulse 1.8s ease-in-out infinite;
+}
+.gameplay-container .active-turn-label {
+    position: absolute;
+    top: -.72rem;
+    right: .3rem;
+    padding: .08rem .42rem;
+    border: 1px solid #fff0a3;
+    border-radius: 999px;
+    color: #fff8dc;
+    background: #9b1717;
+    box-shadow: 0 .12rem .3rem rgba(0,0,0,.35);
+    font-size: .62rem;
+    font-weight: 900;
+    letter-spacing: .06em;
+    line-height: 1.25;
+    text-transform: uppercase;
+}
+.your-turn-modal-content { border-width: 3px !important; box-shadow: 0 0 2rem rgba(210,155,25,.65) !important; }
+.your-turn-modal-content .modal-title { width: 100%; color: #7c1717; font: 800 clamp(1.65rem, 4vw, 2.35rem) Georgia, "Times New Roman", serif; text-align: center; }
+.your-turn-dice { margin-bottom: .55rem; color: #60420f; font-size: 3rem; letter-spacing: .25rem; line-height: 1; }
+
+@keyframes active-turn-pulse {
+    0%, 100% { box-shadow: 0 0 0 .22rem rgba(255, 207, 51, .4), 0 0 .8rem .15rem rgba(155, 23, 23, .58); }
+    50% { box-shadow: 0 0 0 .38rem rgba(255, 224, 102, .62), 0 0 1.5rem .45rem rgba(155, 23, 23, .82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gameplay-container .player-mini.active-turn { animation: none; }
+}
 .gameplay-container .profile-placeholder { width: 26px; height: 26px; font-size: 1rem; }
 .gameplay-container .action-ribbon { gap: .45rem; margin-bottom: .45rem !important; padding: .35rem .45rem; }
 .gameplay-container .action-ribbon-left,
