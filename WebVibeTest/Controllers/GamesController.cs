@@ -206,6 +206,7 @@ public sealed class GamesController(
         try
         {
             await gameService.PlaceInitialSettlementAsync(CurrentUserId, id, vertexId, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.AwardsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
             return Ok();
         }
@@ -226,6 +227,7 @@ public sealed class GamesController(
         try
         {
             await gameService.PlaceInitialRoadAsync(CurrentUserId, id, edgeId, cancellationToken);
+            await hubContext.Clients.Group(GameHub.GroupName(id)).SendAsync(GameHub.AwardsChangedEvent, id, cancellationToken);
             await NotifyGameStateChangedAsync(id, cancellationToken);
             return Ok();
         }
@@ -556,6 +558,7 @@ public sealed class GamesController(
             result.UserId
         }, cancellationToken);
         await clients.SendAsync(GameHub.ResourceCountsChangedEvent, gameId, cancellationToken);
+        await clients.SendAsync(GameHub.AwardsChangedEvent, gameId, cancellationToken);
         await NotifyGameStateChangedAsync(gameId, cancellationToken);
     }
 
@@ -576,6 +579,7 @@ public sealed class GamesController(
             var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
             await clients.SendAsync(GameHub.DevelopmentCardPlayedEvent,
                 new { gameId, result.Type, result.PlayerUserId }, cancellationToken);
+            await clients.SendAsync(GameHub.AwardsChangedEvent, gameId, cancellationToken);
             if (resourcesChanged) await clients.SendAsync(GameHub.ResourceCountsChangedEvent, gameId, cancellationToken);
             await NotifyGameStateChangedAsync(gameId, cancellationToken);
             return Ok();

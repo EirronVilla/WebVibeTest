@@ -287,6 +287,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             .Where(identity => playerUserIds.Contains(identity.Id))
             .ToDictionaryAsync(identity => identity.Id, identity => identity.UserName ?? identity.Email ?? identity.Id, cancellationToken);
         var ownPlayer = game.Players.Single(player => player.UserId == userId);
+        var awardNames = new Dictionary<string, string>();
+        foreach (var identity in userNames) awardNames[identity.Key] = identity.Value;
         var cards = await dbContext.DevelopmentCards.AsNoTracking()
             .Where(card => card.GameId == gameId && card.PlayedAt == null)
             .ToListAsync(cancellationToken);
@@ -357,7 +359,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                     userNames.GetValueOrDefault(player.UserId, "Unknown"),
                     player.Color,
                     player.TotalResources,
-                    player.VisibleVictoryPoints,
+                    player.VisibleVictoryPoints
+                        + (game.LongestRoadHolderUserId == player.UserId ? 2 : 0)
+                        + (game.LargestArmyHolderUserId == player.UserId ? 2 : 0),
                     cardCounts.GetValueOrDefault(player.UserId),
                     player.UserId == game.CurrentPlayerUserId))
                 .ToList(),
@@ -368,6 +372,12 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             validRoads,
             construction,
             trading,
+            new AwardsReadModel(
+                game.LongestRoadHolderUserId,
+                game.LongestRoadHolderUserId is null ? null : awardNames.GetValueOrDefault(game.LongestRoadHolderUserId),
+                game.LongestRoadLength,
+                game.LargestArmyHolderUserId,
+                game.LargestArmyHolderUserId is null ? null : awardNames.GetValueOrDefault(game.LargestArmyHolderUserId)),
             new DevelopmentCardsReadModel(
                 cards.Where(card => card.OwnerUserId == userId)
                     .OrderBy(card => card.PurchasedAt)
@@ -381,7 +391,10 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 new ResourceInventory(bank.Brick, bank.Lumber, bank.Wool, bank.Grain, bank.Ore),
                 isCurrentPlayer && game.Phase == GamePhase.TurnActions && deck.Count > 0
                     && ownPlayer.Ore > 0 && ownPlayer.Wool > 0 && ownPlayer.Grain > 0,
-                ownPlayer.VisibleVictoryPoints + cards.Count(card => card.OwnerUserId == userId && card.Type == DevelopmentCardType.VictoryPoint),
+                ownPlayer.VisibleVictoryPoints
+                    + cards.Count(card => card.OwnerUserId == userId && card.Type == DevelopmentCardType.VictoryPoint)
+                    + (game.LongestRoadHolderUserId == userId ? 2 : 0)
+                    + (game.LargestArmyHolderUserId == userId ? 2 : 0),
                 ownPlayer.KnightsPlayed,
                 game.FreeRoadsRemaining,
                 isCurrentPlayer && game.Phase == GamePhase.AwaitingRoadBuilding
@@ -418,6 +431,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var player = game.Players.Single(candidate => candidate.UserId == userId);
         vertex.Settlement = new SettlementState { UserId = userId, Color = player.Color };
         player.VisibleVictoryPoints += 1;
+        RecalculateAwards(game, board);
         game.PendingSettlementVertexId = vertex.Id;
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -454,6 +468,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         edge.Road = new RoadState { UserId = userId, Color = player.Color };
         game.PendingSettlementVertexId = null;
         AdvanceInitialPlacement(game);
+        RecalculateAwards(game, board);
         game.BoardStateJson = SerializeBoard(board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -639,6 +654,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         player.RemoveResource(ResourceType.Lumber, 1);
         ReturnToBank(game, (ResourceType.Brick, 1), (ResourceType.Lumber, 1));
         game.BoardStateJson = SerializeBoard(board);
+        RecalculateAwards(game, board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("Road", edgeId, userId);
@@ -671,6 +687,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         ReturnToBank(game, (ResourceType.Brick, 1), (ResourceType.Lumber, 1), (ResourceType.Wool, 1), (ResourceType.Grain, 1));
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
+        RecalculateAwards(game, board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("Settlement", vertexId, userId);
@@ -700,6 +717,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         ReturnToBank(game, (ResourceType.Ore, 3), (ResourceType.Grain, 2));
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
+        RecalculateAwards(game, board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("City", vertexId, userId);
@@ -747,6 +765,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         game.Players.Single(player => player.UserId == userId).KnightsPlayed++;
         CompleteCardPlay(game, card);
         game.Phase = GamePhase.AwaitingRobberPlacement;
+        RecalculateAwards(game, DeserializeBoard(game.BoardStateJson!));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(card.Id, card.Type, userId);
@@ -821,6 +840,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         game.FreeRoadsRemaining--;
         if (game.FreeRoadsRemaining == 0 || GetValidRoadBuildEdges(board, userId).Count == 0) game.Phase = GamePhase.TurnActions;
         game.BoardStateJson = SerializeBoard(board);
+        RecalculateAwards(game, board);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new("Road", edgeId, userId);
@@ -1085,6 +1105,56 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                 && vertex.Settlement.BuildingType == BuildingType.Settlement)
             .Select(vertex => vertex.Id)
             .ToHashSet();
+
+    private static void RecalculateAwards(Game game, BoardState board)
+    {
+        var lengths = game.Players.ToDictionary(player => player.UserId, player => LongestRoad(board, player.UserId));
+        var best = lengths.Values.DefaultIfEmpty(0).Max();
+        if (game.LongestRoadHolderUserId is not null && lengths.GetValueOrDefault(game.LongestRoadHolderUserId) == best && best >= 5)
+            game.LongestRoadLength = best;
+        else
+        {
+            game.LongestRoadHolderUserId = best >= 5 ? lengths.First(pair => pair.Value == best).Key : null;
+            game.LongestRoadLength = best;
+        }
+
+        var armyBest = game.Players.Select(player => player.KnightsPlayed).DefaultIfEmpty(0).Max();
+        if (game.LargestArmyHolderUserId is not null && game.Players.Any(player => player.UserId == game.LargestArmyHolderUserId && player.KnightsPlayed == armyBest && armyBest >= 3))
+            return;
+        game.LargestArmyHolderUserId = armyBest >= 3
+            ? game.Players.First(player => player.KnightsPlayed == armyBest).UserId
+            : null;
+    }
+
+    private static int LongestRoad(BoardState board, string userId)
+    {
+        var owned = board.Edges.Where(edge => edge.Road?.UserId == userId).ToList();
+        var best = 0;
+        foreach (var edge in owned)
+        {
+            best = Math.Max(best, RoadPath(board, edge.Id, edge.VertexAId, userId, new HashSet<int>()));
+            best = Math.Max(best, RoadPath(board, edge.Id, edge.VertexBId, userId, new HashSet<int>()));
+        }
+        return best;
+    }
+
+    private static int RoadPath(BoardState board, int edgeId, int vertexId, string userId, HashSet<int> used)
+    {
+        used.Add(edgeId);
+        var vertex = board.Vertices[vertexId];
+        var best = 1;
+        if (vertex.Settlement is not null && vertex.Settlement.UserId != userId) return best;
+        foreach (var nextId in vertex.EdgeIds)
+        {
+            if (used.Contains(nextId)) continue;
+            var next = board.Edges[nextId];
+            if (next.Road?.UserId != userId) continue;
+            var nextVertex = next.VertexAId == vertexId ? next.VertexBId : next.VertexAId;
+            var branchUsed = new HashSet<int>(used);
+            best = Math.Max(best, 1 + RoadPath(board, nextId, nextVertex, userId, branchUsed));
+        }
+        return best;
+    }
 
     private static void EnsureResources(GamePlayer player, params (ResourceType Resource, int Amount)[] costs)
     {

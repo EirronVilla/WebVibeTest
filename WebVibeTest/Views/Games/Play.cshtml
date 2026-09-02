@@ -39,7 +39,7 @@
             <button type="button" class="player-mini player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)" data-bs-toggle="modal" data-bs-target="#player-modal-@playerIndex">
                 <span class="profile-placeholder" aria-hidden="true">♙</span>
                 <span class="player-mini-name">@shortName</span>
-                <span class="vp-seal">@player.VisibleVictoryPoints VP</span>
+                <span class="player-mini-awards"><span class="vp-seal">@player.VisibleVictoryPoints VP</span>@if (Model.Awards.LongestRoadHolderUserId == player.UserId) { <span class="award-chip" title="Longest Road">LR</span> }@if (Model.Awards.LargestArmyHolderUserId == player.UserId) { <span class="award-chip" title="Largest Army">LA</span> }</span>
             </button>
             <div class="modal fade renaissance-modal" id="player-modal-@playerIndex" tabindex="-1" aria-labelledby="player-modal-title-@playerIndex" aria-hidden="true">
                 <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
@@ -49,6 +49,14 @@
                         <div class="vp-seal d-inline-block my-3">@player.VisibleVictoryPoints victory points</div>
                         <p class="mb-1"><strong>Resource cards:</strong> @player.TotalResources</p>
                         <p><strong>Development cards:</strong> @player.DevelopmentCardCount</p>
+                        @if (Model.Awards.LongestRoadHolderUserId == player.UserId)
+                        {
+                            <div class="award-detail longest-road-award">LR &middot; Longest Road (@Model.Awards.LongestRoadLength roads) &middot; +2 VP</div>
+                        }
+                        @if (Model.Awards.LargestArmyHolderUserId == player.UserId)
+                        {
+                            <div class="award-detail largest-army-award">LA &middot; Largest Army &middot; +2 VP</div>
+                        }
                         <small class="text-muted">Other players' card identities remain private.</small>
                     </div>
                 </div></div>
@@ -269,6 +277,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 </div>
 
 <h2 class="board-heading">The Settlers' Map</h2>
+<div class="awards-banner mb-2">
+    <span>🏆 Longest Road: <strong>@(Model.Awards.LongestRoadHolderName ?? "Unclaimed")</strong>@if (Model.Awards.LongestRoadLength > 0) { <text> (@Model.Awards.LongestRoadLength roads)</text> }</span>
+    <span>⚔ Largest Army: <strong>@(Model.Awards.LargestArmyHolderName ?? "Unclaimed")</strong></span>
+</div>
 <svg viewBox="@viewBox" style="width:100%; max-height:75vh; background:#b7dceb" aria-label="CATAN board">
     <defs>
         @foreach (var hex in board.Hexes)
@@ -499,6 +511,11 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     }
     .profile-placeholder-large { width: 88px; height: 88px; font-size: 3rem; }
     .vp-seal { padding: .22rem .48rem; border: 2px solid #9a6611; border-radius: 999px; color: #fff9dc; background: #9b1717; font-weight: 800; white-space: nowrap; }
+    .player-mini-awards { display: flex; align-items: center; gap: .2rem; }
+    .award-chip { display: inline-grid; width: 1.55rem; height: 1.55rem; place-items: center; border: 1px solid #694d18; border-radius: 50%; color: #fff8df; background: #60420f; font-size: .65rem; font-weight: 800; }
+    .award-detail { margin: .35rem auto; padding: .4rem .65rem; border: 1px solid #96702b; border-radius: .35rem; font-weight: 700; }
+    .longest-road-award { color: #fff8df; background: #60420f; }
+    .largest-army-award { color: #fff8df; background: #7c1d1d; }
     .action-ribbon { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem; }
     .action-ribbon-left, .action-ribbon-right { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
     .renaissance-button { border: 1px solid #694d18; color: #fff8df; background: linear-gradient(#926a27, #60420f); }
@@ -511,6 +528,7 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     .renaissance-modal .modal-content { border: 2px solid #765719; background: #fff9e9; box-shadow: inset 0 0 0 4px #e4ca8e; }
     .renaissance-modal .modal-header { border-bottom-color: #b89a5d; background: linear-gradient(90deg,#ead5a4,#fff8e6); font-family: Georgia,"Times New Roman",serif; }
     .board-heading { margin: .75rem 0 .35rem; color: #553b14; font: 700 1.35rem Georgia,"Times New Roman",serif; letter-spacing: .04em; }
+    .awards-banner { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem; padding: .45rem .7rem; border: 1px solid #96702b; border-radius: .4rem; color: #4a3211; background: #f8eac4; font-family: Georgia,"Times New Roman",serif; }
     @@media (max-width: 767px) {
         .action-ribbon, .player-hand-section { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; }
         .action-ribbon-right { justify-content: flex-end; }

@@ -22,7 +22,10 @@ public sealed record ActiveGameReadModel(
     IReadOnlySet<int> ValidRoadEdgeIds,
     ConstructionReadModel Construction,
     TradingReadModel Trading,
+    AwardsReadModel Awards,
     DevelopmentCardsReadModel DevelopmentCards);
+
+public sealed record AwardsReadModel(string? LongestRoadHolderUserId, string? LongestRoadHolderName, int LongestRoadLength, string? LargestArmyHolderUserId, string? LargestArmyHolderName);
 
 public sealed record ConstructionReadModel(
     int RoadsRemaining,

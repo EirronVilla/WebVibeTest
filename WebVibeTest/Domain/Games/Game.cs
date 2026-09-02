@@ -24,5 +24,8 @@ public sealed class Game
     public int TurnNumber { get; set; }
     public bool DevelopmentCardPlayedThisTurn { get; set; }
     public int FreeRoadsRemaining { get; set; }
+    public string? LongestRoadHolderUserId { get; set; }
+    public int LongestRoadLength { get; set; }
+    public string? LargestArmyHolderUserId { get; set; }
     public ICollection<GamePlayer> Players { get; set; } = new List<GamePlayer>();
 }
