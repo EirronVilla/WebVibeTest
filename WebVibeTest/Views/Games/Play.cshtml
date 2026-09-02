@@ -19,11 +19,8 @@
 @{
     ViewData["Title"] = Model.Name;
     var board = Model.Board;
-    var minX = board.Vertices.Min(vertex => vertex.X) - 1;
-    var maxX = board.Vertices.Max(vertex => vertex.X) + 1;
-    var minY = board.Vertices.Min(vertex => vertex.Y) - 1;
-    var maxY = board.Vertices.Max(vertex => vertex.Y) + 1;
-    var viewBox = $"{F(minX)} {F(minY)} {F(maxX - minX)} {F(maxY - minY)}";
+    var svgBounds = BoardSvgBounds.From(board);
+    var viewBox = $"{F(svgBounds.MinX)} {F(svgBounds.MinY)} {F(svgBounds.Width)} {F(svgBounds.Height)}";
     var currentPlayerShortName = Model.CurrentPlayerName.Split('@')[0];
 }
 
@@ -281,7 +278,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     <span>🏆 Longest Road: <strong>@(Model.Awards.LongestRoadHolderName ?? "Unclaimed")</strong>@if (Model.Awards.LongestRoadLength > 0) { <text> (@Model.Awards.LongestRoadLength roads)</text> }</span>
     <span>⚔ Largest Army: <strong>@(Model.Awards.LargestArmyHolderName ?? "Unclaimed")</strong></span>
 </div>
-<svg viewBox="@viewBox" style="width:100%; max-height:75vh; background:#b7dceb" aria-label="CATAN board">
+<div class="board-art-frame">
+<div class="board-art-viewport">
+<div class="board-art-safe-area">
+<svg class="catan-board-svg" viewBox="@viewBox" preserveAspectRatio="xMidYMid meet" aria-label="CATAN board">
     <defs>
         @foreach (var hex in board.Hexes)
         {
@@ -314,10 +314,22 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                        transform="rotate(30 @F(tileCenterX) @F(tileCenterY))" />
             </g>
             <polygon points="@points" fill="none" stroke="#f3e6bd" stroke-width="0.08" />
-            @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberPlacement && hex.Id != board.RobberHexId)
-            {
-                <polygon class="placement-location" data-robber-hex-id="@hex.Id" points="@points" fill="#ffc107" fill-opacity="0.22" stroke="#ffc107" stroke-width="0.08" />
-            }
+        }
+    </g>
+
+    <g id="board-ports" pointer-events="none">
+        @foreach (var port in board.Ports)
+        {
+            var portLayout = PortSvgMap.CreateLayout(board, port);
+            var portStyle = portLayout.Presentation;
+            <g class="port-marker port-@portStyle.CssClass" aria-label="@portStyle.AccessibleName">
+                <line class="port-connector" x1="@F(portLayout.MarkerX)" y1="@F(portLayout.MarkerY)" x2="@F(portLayout.VertexAX)" y2="@F(portLayout.VertexAY)" />
+                <line class="port-connector" x1="@F(portLayout.MarkerX)" y1="@F(portLayout.MarkerY)" x2="@F(portLayout.VertexBX)" y2="@F(portLayout.VertexBY)" />
+                <rect class="port-badge" x="@F(portLayout.MarkerX - PortSvgMap.BadgeHalfWidth)" y="@F(portLayout.MarkerY - PortSvgMap.BadgeHalfHeight)"
+                      width="@F(PortSvgMap.BadgeHalfWidth * 2)" height="@F(PortSvgMap.BadgeHalfHeight * 2)" rx="0.12" />
+                <text class="port-rate" x="@F(portLayout.MarkerX)" y="@F(portLayout.MarkerY - 0.055)" text-anchor="middle" dominant-baseline="middle">@portStyle.Rate</text>
+                <text class="port-detail" x="@F(portLayout.MarkerX)" y="@F(portLayout.MarkerY + 0.15)" text-anchor="middle" dominant-baseline="middle">@portStyle.Detail</text>
+            </g>
         }
     </g>
 
@@ -371,14 +383,6 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         }
     }
 
-    @foreach (var port in board.Ports)
-    {
-        var edge = board.Edges[port.EdgeId];
-        var x = (board.Vertices[edge.VertexAId].X + board.Vertices[edge.VertexBId].X) / 2;
-        var y = (board.Vertices[edge.VertexAId].Y + board.Vertices[edge.VertexBId].Y) / 2;
-        <text><tspan x="@F(x)" y="@F(y + 0.08)" text-anchor="middle" font-size="0.18" font-weight="bold" fill="#242424">@port.Type</tspan></text>
-    }
-
     @foreach (var vertex in board.Vertices)
     {
         @if (vertex.Settlement is not null)
@@ -430,7 +434,21 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             </g>
         }
     }
+
+    <g id="robber-placement-indicators">
+        @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.AwaitingRobberPlacement)
+        {
+            @foreach (var hex in board.Hexes.Where(hex => hex.Id != board.RobberHexId))
+            {
+                var points = string.Join(" ", hex.VertexIds.Select(vertexId => $"{F(board.Vertices[vertexId].X)},{F(board.Vertices[vertexId].Y)}"));
+                <polygon class="placement-location" data-robber-hex-id="@hex.Id" points="@points" fill="#ffc107" fill-opacity="0.22" stroke="#ffc107" stroke-width="0.08" />
+            }
+        }
+    </g>
 </svg>
+</div>
+</div>
+</div>
 
 <section class="renaissance-panel player-hand-section mt-3">
     <div class="hand-column">

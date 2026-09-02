@@ -19,3 +19,64 @@ body { color: var(--ink); background-color: #c5a877; background-image: radial-gr
 .player-color-red { background: #a93737; color: white; } .player-color-blue { background: #38689d; color: white; } .player-color-white { background: #f6f1df; } .player-color-yellow { background: #e5bd32; } .player-color-green { background: #3d7545; color: white; } .player-color-black { background: #272727; color: white; }
 .form-control, .form-select { border-color: #a6813e; }
 footer { color: #4b3927 !important; }
+
+/* Board artwork layers: ocean below the SVG, decorative frame above it. */
+.board-art-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1674 / 943;
+    overflow: hidden;
+    box-shadow: 0 .55rem 1.25rem rgba(27, 16, 8, .42);
+    isolation: isolate;
+}
+
+.board-art-frame::after {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    content: "";
+    background: url("../img/assets/frame.png") center / 100% 100% no-repeat;
+    pointer-events: none;
+}
+
+.board-art-viewport {
+    position: absolute;
+    z-index: 1;
+    /* Matches the transparent opening in frame.png. */
+    inset: 9% 6% 10%;
+    overflow: hidden;
+    background: #147da6 url("../img/assets/ocean.png") center / cover no-repeat;
+}
+
+.board-art-safe-area {
+    position: absolute;
+    inset: .65% 1% .85%;
+}
+
+.catan-board-svg {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.port-connector {
+    stroke: #f3dfaa;
+    stroke-width: .055;
+    stroke-linecap: round;
+    paint-order: stroke;
+    filter: drop-shadow(0 .025px .025px rgba(25, 18, 10, .9));
+}
+
+.port-badge { stroke: #f4dfa0; stroke-width: .045; fill: #315c72; }
+.port-rate { fill: #fff8dc; font: 800 .19px Georgia, "Times New Roman", serif; }
+.port-detail { fill: #fff4cf; font: 700 .105px Arial, sans-serif; letter-spacing: .012px; }
+.port-generic .port-badge { fill: #315c72; }
+.port-generic .port-detail { font-size: .17px; }
+.port-brick .port-badge { fill: #984c36; }
+.port-lumber .port-badge { fill: #356b3e; }
+.port-wool .port-badge { fill: #78a95c; }
+.port-grain .port-badge { fill: #b58a26; }
+.port-ore .port-badge { fill: #5c6571; }
