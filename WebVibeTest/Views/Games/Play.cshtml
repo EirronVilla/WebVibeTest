@@ -24,100 +24,60 @@
     var minY = board.Vertices.Min(vertex => vertex.Y) - 1;
     var maxY = board.Vertices.Max(vertex => vertex.Y) + 1;
     var viewBox = $"{F(minX)} {F(minY)} {F(maxX - minX)} {F(maxY - minY)}";
+    var currentPlayerShortName = Model.CurrentPlayerName.Split('@')[0];
 }
 
 <h1>@Model.Name</h1>
-<p><strong>Phase:</strong> @Model.Phase &middot; <strong>Current player:</strong> @Model.CurrentPlayerName</p>
+<p><strong>Phase:</strong> @Model.Phase &middot; <strong>Current player:</strong> @currentPlayerShortName</p>
 
-<div class="row g-3 mb-3">
-    <div class="col-md-7">
-        <div class="card h-100"><div class="card-body">
-            <h2 class="h5">Players</h2>
-            <ul class="list-group list-group-flush">
-                @foreach (var player in Model.Players)
-                {
-                    <li class="player-panel-row player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)">
-                        <span class="d-flex align-items-center gap-2">
-                            <strong>@player.DisplayName</strong>
-                            @if (player.IsCurrentPlayer)
-                            {
-                                <span class="turn-badge">Playing now</span>
-                            }
-                        </span>
-                        <span class="resource-total">@player.VisibleVictoryPoints VP &middot; @player.TotalResources resource cards &middot; @player.DevelopmentCardCount development cards</span>
-                    </li>
-                }
-            </ul>
-        </div></div>
-    </div>
-    <div class="col-md-5">
-        <div class="card h-100"><div class="card-body">
-            <h2 class="h5">Your resources (@Model.OwnResources.Total)</h2>
-            <div class="resource-hand">
-                @foreach (var resource in Enum.GetValues<ResourceType>())
-                {
-                    <div class="resource-card" title="@resource: @Model.OwnResources.Get(resource)">
-                        <div class="resource-card-art">
-                            <img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" />
-                            <span class="resource-count">@Model.OwnResources.Get(resource)</span>
-                        </div>
-                        <span class="resource-name">@resource</span>
-                    </div>
-                }
-            </div>
-        </div></div>
-    </div>
-</div>
-
-<div class="card mb-3"><div class="card-body">
-    <div class="d-flex justify-content-between align-items-center">
-        <h2 class="h5 mb-0">Your development cards</h2>
-        <span>@Model.DevelopmentCards.DeckRemaining remaining &middot; Actual VP: @Model.DevelopmentCards.ActualVictoryPoints</span>
-    </div>
-    <div class="d-flex flex-wrap gap-3 mt-3">
-        @foreach (var card in Model.DevelopmentCards.OwnCards)
+<section class="renaissance-panel player-roster mb-3" aria-label="Players">
+    <div class="player-roster-grid">
+        @for (var playerIndex = 0; playerIndex < Model.Players.Count; playerIndex++)
         {
-            <div class="development-card text-center" data-card-id="@card.Id">
-                <img src="~/img/cards/development_card.png" alt="Development card" />
-                <strong class="d-block">@card.Type</strong>
-                @if (card.IsNew) { <small class="text-muted d-block">Playable next turn</small> }
-                @if (card.CanPlay)
-                {
-                    if (card.Type == DevelopmentCardType.YearOfPlenty)
-                    {
-                        <select class="form-select form-select-sm dev-first">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
-                        <select class="form-select form-select-sm dev-second">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
-                    }
-                    else if (card.Type == DevelopmentCardType.Monopoly)
-                    {
-                        <select class="form-select form-select-sm dev-resource">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
-                    }
-                    <button type="button" class="btn btn-sm btn-warning mt-1 play-development" data-card-type="@card.Type">Play</button>
-                }
+            var player = Model.Players[playerIndex];
+            var shortName = player.DisplayName.Split('@')[0];
+            <button type="button" class="player-mini player-color-@player.Color.ToString().ToLowerInvariant() @(player.IsCurrentPlayer ? "active-turn" : null)" data-bs-toggle="modal" data-bs-target="#player-modal-@playerIndex">
+                <span class="profile-placeholder" aria-hidden="true">♙</span>
+                <span class="player-mini-name">@shortName</span>
+                <span class="vp-seal">@player.VisibleVictoryPoints VP</span>
+            </button>
+            <div class="modal fade renaissance-modal" id="player-modal-@playerIndex" tabindex="-1" aria-labelledby="player-modal-title-@playerIndex" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+                    <div class="modal-header"><h2 class="modal-title fs-5" id="player-modal-title-@playerIndex">@shortName</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                    <div class="modal-body text-center">
+                        <div class="profile-placeholder profile-placeholder-large mx-auto">♙</div>
+                        <div class="vp-seal d-inline-block my-3">@player.VisibleVictoryPoints victory points</div>
+                        <p class="mb-1"><strong>Resource cards:</strong> @player.TotalResources</p>
+                        <p><strong>Development cards:</strong> @player.DevelopmentCardCount</p>
+                        <small class="text-muted">Other players' card identities remain private.</small>
+                    </div>
+                </div></div>
             </div>
         }
-        @if (Model.DevelopmentCards.OwnCards.Count == 0) { <span class="text-muted">None yet.</span> }
     </div>
-    @if (Model.DevelopmentCards.CanBuy)
-    {
-        <button type="button" id="buy-development" class="btn btn-outline-warning mt-3">Buy development card <small>(Ore, Wool, Grain)</small></button>
-    }
-</div></div>
+</section>
 
-@if (Model.LatestDie1 is int die1 && Model.LatestDie2 is int die2)
-{
-    <div class="d-flex align-items-center gap-2 mb-3" aria-label="Latest dice roll: @die1 and @die2">
-        <strong>Latest roll:</strong>
-        <span class="border rounded bg-light d-inline-flex align-items-center justify-content-center fs-3" style="width:2.5rem;height:2.5rem">@die1</span>
-        <span class="border rounded bg-light d-inline-flex align-items-center justify-content-center fs-3" style="width:2.5rem;height:2.5rem">@die2</span>
-        <span>Total @(die1 + die2)</span>
+<section class="action-ribbon mb-3">
+    <div class="action-ribbon-left">
+        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#build-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Build</button>
+        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#player-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Trade with players</button>
+        <button class="btn renaissance-button" data-bs-toggle="modal" data-bs-target="#maritime-trade-modal" @(Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions ? null : "disabled")>Maritime Trade</button>
     </div>
-}
-
-@if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
-{
-    <button type="button" id="roll-dice" class="btn btn-primary mb-3">Roll two dice</button>
-}
+    <div class="action-ribbon-right">
+        @if (Model.LatestDie1 is int die1 && Model.LatestDie2 is int die2)
+        {
+            <span class="dice-label">Latest</span><span class="die-face">@die1</span><span class="die-face">@die2</span><strong>= @(die1 + die2)</strong>
+        }
+        @if (Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnProduction)
+        {
+            <button type="button" id="roll-dice" class="btn btn-primary">Roll dice</button>
+        }
+        @if (Model.IsCurrentPlayer && Model.Phase == GamePhase.TurnActions)
+        {
+            <button type="button" id="end-turn" class="btn btn-danger">End turn</button>
+        }
+    </div>
+</section>
 
 @if (Model.RequiredDiscardCount > 0)
 {
@@ -156,12 +116,13 @@
 
 @if (Model.IsCurrentPlayer && Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnActions)
 {
-    <div class="card border-primary mb-3"><div class="card-body">
-        <h2 class="h5">Build</h2>
+    <div class="modal fade renaissance-modal" id="build-modal" tabindex="-1" aria-labelledby="build-modal-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="build-modal-title">Commission construction</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
         <div class="d-flex flex-wrap gap-2">
             @if (Model.Construction.CanAffordRoad && Model.Construction.RoadsRemaining > 0 && Model.Construction.ValidRoadEdgeIds.Count > 0)
             {
-                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="road">Road <small>(1 Brick, 1 Lumber)</small></button>
+                <button type="button" class="btn btn-outline-primary build-mode" data-bs-dismiss="modal" data-build-mode="road">Road <small>(1 Brick, 1 Lumber)</small></button>
             }
             else
             {
@@ -169,7 +130,7 @@
             }
             @if (Model.Construction.CanAffordSettlement && Model.Construction.SettlementsRemaining > 0 && Model.Construction.ValidSettlementVertexIds.Count > 0)
             {
-                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="settlement">Settlement <small>(Brick, Lumber, Wool, Grain)</small></button>
+                <button type="button" class="btn btn-outline-primary build-mode" data-bs-dismiss="modal" data-build-mode="settlement">Settlement <small>(Brick, Lumber, Wool, Grain)</small></button>
             }
             else
             {
@@ -177,7 +138,7 @@
             }
             @if (Model.Construction.CanAffordCity && Model.Construction.CitiesRemaining > 0 && Model.Construction.ValidCityVertexIds.Count > 0)
             {
-                <button type="button" class="btn btn-outline-primary build-mode" data-build-mode="city">City <small>(3 Ore, 2 Grain)</small></button>
+                <button type="button" class="btn btn-outline-primary build-mode" data-bs-dismiss="modal" data-build-mode="city">City <small>(3 Ore, 2 Grain)</small></button>
             }
             else
             {
@@ -187,10 +148,12 @@
         <div class="small text-muted mt-2">
             Pieces remaining: @Model.Construction.RoadsRemaining roads, @Model.Construction.SettlementsRemaining settlements, @Model.Construction.CitiesRemaining cities.
         </div>
-    </div></div>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+    </div></div></div>
 
-    <div class="card border-success mb-3"><div class="card-body">
-        <h2 class="h5">Player trade</h2>
+    <div class="modal fade renaissance-modal" id="player-trade-modal" tabindex="-1" aria-labelledby="player-trade-title" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="player-trade-title">Negotiate with players</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
         <div class="row g-3" id="trade-proposal">
             <div class="col-md-6">
                 <strong>Offer</strong>
@@ -211,11 +174,12 @@
                 </div>
             </div>
         </div>
-        <button type="button" id="propose-trade" class="btn btn-success mt-2">Propose to all players</button>
-    </div></div>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="propose-trade" class="btn btn-success">Propose to all players</button></div>
+    </div></div></div>
 
-    <div class="card border-info mb-3"><div class="card-body">
-        <h2 class="h5">Maritime trade</h2>
+    <div class="modal fade renaissance-modal" id="maritime-trade-modal" tabindex="-1" aria-labelledby="maritime-trade-title" aria-hidden="true"><div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="maritime-trade-title">Trade across the sea</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
         <div class="d-flex flex-wrap gap-2 align-items-end">
             <div><label class="form-label">Give</label><select id="maritime-give" class="form-select">
                 @foreach (var resource in Enum.GetValues<ResourceType>())
@@ -226,10 +190,9 @@
             <div><label class="form-label">Receive</label><select id="maritime-receive" class="form-select">
                 @foreach (var resource in Enum.GetValues<ResourceType>()) { <option value="@resource">@resource</option> }
             </select></div>
-            <button type="button" id="maritime-trade" class="btn btn-info">Trade with bank</button>
         </div>
-    </div></div>
-    <button type="button" id="end-turn" class="btn btn-primary mb-3">End turn</button>
+        </div><div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="button" id="maritime-trade" class="btn btn-info">Trade with bank</button></div>
+    </div></div></div>
 }
 
 @if (Model.IsCurrentPlayer && Model.Phase == GamePhase.AwaitingRoadBuilding)
@@ -281,12 +244,31 @@
 }
 else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
 {
-    <div class="alert alert-success">Initial placement is complete. Dice rolling is not implemented yet.</div>
+    <div class="alert alert-success">Production phase: the active player must roll the dice.</div>
 }
 
 <div id="placement-error" class="alert alert-danger d-none" role="alert"></div>
 <form id="anti-forgery" class="d-none">@Html.AntiForgeryToken()</form>
 
+<div class="modal fade" id="placement-confirmation-modal" tabindex="-1" aria-labelledby="placement-confirmation-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title fs-5" id="placement-confirmation-title">Confirm placement</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                Place this <strong id="placement-piece-name">piece</strong> at the selected location?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirm-placement">Place piece</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h2 class="board-heading">The Settlers' Map</h2>
 <svg viewBox="@viewBox" style="width:100%; max-height:75vh; background:#b7dceb" aria-label="CATAN board">
     <defs>
         @foreach (var hex in board.Hexes)
@@ -409,7 +391,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
         {
             @if (Model.ValidSettlementVertexIds.Contains(vertex.Id))
             {
-                <circle class="placement-location available-vertex" data-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.13" fill="none" stroke="#111" stroke-width="0.045" />
+                <g class="placement-location available-vertex">
+                    <circle cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.13" fill="none" stroke="#111" stroke-width="0.045" pointer-events="none" />
+                    <circle class="vertex-hit-target" data-vertex-id="@vertex.Id" cx="@F(vertex.X)" cy="@F(vertex.Y)" r="0.28" fill="#fff" fill-opacity="0.001" stroke="none" pointer-events="all" />
+                </g>
             }
             else
             {
@@ -433,7 +418,104 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     }
 </svg>
 
+<section class="renaissance-panel player-hand-section mt-3">
+    <div class="hand-column">
+        <h2 class="h5">Your resources (@Model.OwnResources.Total)</h2>
+        <div class="resource-hand">
+            @foreach (var resource in Enum.GetValues<ResourceType>())
+            {
+                <div class="resource-card" title="@resource: @Model.OwnResources.Get(resource)">
+                    <div class="resource-card-art"><img src="@Url.Content(ResourceCardImageMap.GetPath(resource))" alt="@resource resource card" /><span class="resource-count">@Model.OwnResources.Get(resource)</span></div>
+                    <span class="resource-name">@resource</span>
+                </div>
+            }
+        </div>
+    </div>
+    <button type="button" class="development-stack" data-bs-toggle="modal" data-bs-target="#development-cards-modal">
+        <img src="~/img/cards/development_card.png" alt="Open your development cards" />
+        <span><strong>@Model.DevelopmentCards.OwnCards.Count</strong> development cards</span>
+        <small>@Model.DevelopmentCards.DeckRemaining remain in the deck</small>
+    </button>
+</section>
+
+<div class="modal fade renaissance-modal" id="development-cards-modal" tabindex="-1" aria-labelledby="development-cards-title" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title fs-5" id="development-cards-title">Your council of development</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+            <p>Actual victory points: <strong>@Model.DevelopmentCards.ActualVictoryPoints</strong> &middot; Knights played: @Model.DevelopmentCards.KnightsPlayed</p>
+            <div class="d-flex flex-wrap gap-3">
+                @foreach (var card in Model.DevelopmentCards.OwnCards)
+                {
+                    <div class="development-card text-center" data-card-id="@card.Id">
+                        <img src="~/img/cards/development_card.png" alt="Development card" />
+                        <strong class="d-block">@card.Type</strong>
+                        @if (card.IsNew) { <small class="text-muted d-block">Playable next turn</small> }
+                        @if (card.CanPlay)
+                        {
+                            if (card.Type == DevelopmentCardType.YearOfPlenty)
+                            {
+                                <select class="form-select form-select-sm dev-first">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                                <select class="form-select form-select-sm dev-second">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                            }
+                            else if (card.Type == DevelopmentCardType.Monopoly)
+                            {
+                                <select class="form-select form-select-sm dev-resource">@foreach (var resource in Enum.GetValues<ResourceType>()) { <option>@resource</option> }</select>
+                            }
+                            <button type="button" class="btn btn-sm btn-warning mt-1 play-development" data-card-type="@card.Type">Use card</button>
+                        }
+                    </div>
+                }
+                @if (Model.DevelopmentCards.OwnCards.Count == 0) { <span class="text-muted">You have no development cards.</span> }
+            </div>
+        </div>
+        <div class="modal-footer">
+            @if (Model.DevelopmentCards.CanBuy) { <button type="button" id="buy-development" class="btn btn-warning">Buy card <small>(Ore, Wool, Grain)</small></button> }
+            <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+    </div></div>
+</div>
+
 <style>
+    .renaissance-panel,
+    .action-ribbon {
+        border: 1px solid #80642d;
+        border-radius: .65rem;
+        background: linear-gradient(135deg, #fff9e8, #ead7aa);
+        box-shadow: inset 0 0 0 3px rgba(255,255,255,.45), 0 .3rem .8rem rgba(62,42,18,.2);
+        font-family: Georgia, "Times New Roman", serif;
+    }
+    .player-roster { padding: .55rem; }
+    .player-roster-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: .45rem; }
+    .player-mini {
+        display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: .4rem;
+        min-height: 46px; padding: .35rem .5rem; border: 1px solid rgba(42,28,10,.55); border-radius: .4rem;
+        color: #211608; text-align: left; box-shadow: inset 0 0 0 2px rgba(255,255,255,.25);
+    }
+    .player-mini.active-turn { outline: 3px solid #d29b19; box-shadow: 0 0 12px rgba(210,155,25,.75); }
+    .player-mini-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-placeholder {
+        display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #70551e;
+        border-radius: 50%; color: #70551e; background: #f7edcf; font-size: 1.2rem;
+    }
+    .profile-placeholder-large { width: 88px; height: 88px; font-size: 3rem; }
+    .vp-seal { padding: .22rem .48rem; border: 2px solid #9a6611; border-radius: 999px; color: #fff9dc; background: #9b1717; font-weight: 800; white-space: nowrap; }
+    .action-ribbon { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem; }
+    .action-ribbon-left, .action-ribbon-right { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+    .renaissance-button { border: 1px solid #694d18; color: #fff8df; background: linear-gradient(#926a27, #60420f); }
+    .renaissance-button:hover { color: white; background: linear-gradient(#a77b31, #755117); }
+    .die-face { display: inline-grid; width: 2.35rem; height: 2.35rem; place-items: center; border: 2px solid #654a1c; border-radius: .35rem; background: #fffdf4; font: 700 1.25rem Georgia,serif; }
+    .player-hand-section { display: grid; grid-template-columns: 1fr minmax(150px, 210px); gap: 1rem; padding: 1rem; }
+    .development-stack { padding: .6rem; border: 1px solid #72551d; border-radius: .5rem; color: #34230e; background: rgba(255,255,255,.42); }
+    .development-stack img { display: block; width: 85px; height: 115px; margin: 0 auto .4rem; object-fit: contain; }
+    .development-stack span, .development-stack small { display: block; }
+    .renaissance-modal .modal-content { border: 2px solid #765719; background: #fff9e9; box-shadow: inset 0 0 0 4px #e4ca8e; }
+    .renaissance-modal .modal-header { border-bottom-color: #b89a5d; background: linear-gradient(90deg,#ead5a4,#fff8e6); font-family: Georgia,"Times New Roman",serif; }
+    .board-heading { margin: .75rem 0 .35rem; color: #553b14; font: 700 1.35rem Georgia,"Times New Roman",serif; letter-spacing: .04em; }
+    @@media (max-width: 767px) {
+        .action-ribbon, .player-hand-section { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; }
+        .action-ribbon-right { justify-content: flex-end; }
+    }
+
     .player-panel-row {
         display: flex;
         align-items: center;
@@ -515,6 +597,8 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
     }
     .development-card { width: 8rem; }
     .development-card img { width: 100%; height: 9rem; object-fit: contain; }
+    .vertex-hit-target { cursor: pointer; }
+    .available-vertex:hover > circle:first-child { stroke: #00a6ff; stroke-width: 0.075; }
 
     .resource-count {
         position: absolute;
@@ -558,6 +642,10 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
             const errorBox = document.getElementById('placement-error');
             let submitting = false;
             let refreshing = false;
+            let pendingPlacement = null;
+            const placementModalElement = document.getElementById('placement-confirmation-modal');
+            const placementModal = bootstrap.Modal.getOrCreateInstance(placementModalElement);
+            const placementPieceName = document.getElementById('placement-piece-name');
 
             const postCommand = async (url, values = {}) => {
                 if (submitting) return;
@@ -571,22 +659,42 @@ else if (Model.Phase == WebVibeTest.Domain.Games.GamePhase.TurnProduction)
                 }
             };
 
+            const confirmPlacement = (piece, action) => {
+                pendingPlacement = action;
+                placementPieceName.textContent = piece;
+                placementModal.show();
+            };
+
+            document.getElementById('confirm-placement').addEventListener('click', () => {
+                const action = pendingPlacement;
+                pendingPlacement = null;
+                placementModal.hide();
+                action?.();
+            });
+            placementModalElement.addEventListener('hidden.bs.modal', () => pendingPlacement = null);
+
             document.querySelectorAll('[data-vertex-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("PlaceSettlement", "Games")', { vertexId: element.dataset.vertexId })));
+                element.addEventListener('click', () => confirmPlacement('settlement', () =>
+                    postCommand('@Url.Action("PlaceSettlement", "Games")', { vertexId: element.dataset.vertexId }))));
             document.querySelectorAll('[data-edge-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("PlaceRoad", "Games")', { edgeId: element.dataset.edgeId })));
+                element.addEventListener('click', () => confirmPlacement('road', () =>
+                    postCommand('@Url.Action("PlaceRoad", "Games")', { edgeId: element.dataset.edgeId }))));
             document.querySelectorAll('[data-robber-hex-id]').forEach(element =>
                 element.addEventListener('click', () => postCommand('@Url.Action("MoveRobber", "Games")', { hexId: element.dataset.robberHexId })));
             document.querySelectorAll('[data-target-user-id]').forEach(element =>
                 element.addEventListener('click', () => postCommand('@Url.Action("RobPlayer", "Games")', { targetUserId: element.dataset.targetUserId })));
             document.querySelectorAll('[data-build-road-edge-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("BuildRoad", "Games")', { edgeId: element.dataset.buildRoadEdgeId })));
+                element.addEventListener('click', () => confirmPlacement('road', () =>
+                    postCommand('@Url.Action("BuildRoad", "Games")', { edgeId: element.dataset.buildRoadEdgeId }))));
             document.querySelectorAll('[data-build-settlement-vertex-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("BuildSettlement", "Games")', { vertexId: element.dataset.buildSettlementVertexId })));
+                element.addEventListener('click', () => confirmPlacement('settlement', () =>
+                    postCommand('@Url.Action("BuildSettlement", "Games")', { vertexId: element.dataset.buildSettlementVertexId }))));
             document.querySelectorAll('[data-build-city-vertex-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("BuildCity", "Games")', { vertexId: element.dataset.buildCityVertexId })));
+                element.addEventListener('click', () => confirmPlacement('city', () =>
+                    postCommand('@Url.Action("BuildCity", "Games")', { vertexId: element.dataset.buildCityVertexId }))));
             document.querySelectorAll('[data-free-road-edge-id]').forEach(element =>
-                element.addEventListener('click', () => postCommand('@Url.Action("BuildFreeRoad", "Games")', { edgeId: element.dataset.freeRoadEdgeId })));
+                element.addEventListener('click', () => confirmPlacement('road', () =>
+                    postCommand('@Url.Action("BuildFreeRoad", "Games")', { edgeId: element.dataset.freeRoadEdgeId }))));
             document.querySelectorAll('[data-build-mode]').forEach(button => button.addEventListener('click', () => {
                 document.querySelectorAll('.normal-build-location').forEach(location => location.classList.add('d-none'));
                 document.querySelectorAll('[data-build-mode]').forEach(candidate => candidate.classList.remove('active'));
