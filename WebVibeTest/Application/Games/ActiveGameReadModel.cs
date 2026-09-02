@@ -111,3 +111,9 @@ public sealed record DevelopmentCardsReadModel(
 public sealed record DevelopmentCardReadModel(Guid Id, DevelopmentCardType Type, bool CanPlay, bool IsNew);
 public sealed record DevelopmentCardPurchaseResult(Guid CardId, DevelopmentCardType Type, string OwnerUserId);
 public sealed record DevelopmentCardPlayResult(Guid CardId, DevelopmentCardType Type, string PlayerUserId);
+
+public sealed record CompletedGameReadModel(
+    Guid Id, string Name, string WinnerName, IReadOnlyList<FinalPlayerResult> Players,
+    string? LongestRoadHolderName, string? LargestArmyHolderName);
+public sealed record FinalPlayerResult(string DisplayName, int FinalVictoryPoints, int FinalRank, bool IsWinner, int RoadsBuilt, int SettlementsBuilt, int CitiesBuilt, int DevelopmentCardsBought, int DevelopmentCardsPlayed, int TotalResourcesGained);
+public sealed record UserStatistics(int GamesPlayed, int Wins, decimal WinPercentage, int TotalVictoryPoints, decimal AverageVictoryPoints, decimal AverageFinishingPosition);

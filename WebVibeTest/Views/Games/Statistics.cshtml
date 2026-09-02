@@ -1,0 +1,3 @@
+@model WebVibeTest.Application.Games.UserStatistics
+@{ ViewData["Title"] = "My statistics"; }
+<div class="renaissance-panel p-4"><h1>My statistics</h1><dl class="row"><dt class="col-sm-6">Games played</dt><dd class="col-sm-6">@Model.GamesPlayed</dd><dt class="col-sm-6">Wins</dt><dd class="col-sm-6">@Model.Wins</dd><dt class="col-sm-6">Win percentage</dt><dd class="col-sm-6">@Model.WinPercentage%</dd><dt class="col-sm-6">Total victory points</dt><dd class="col-sm-6">@Model.TotalVictoryPoints</dd><dt class="col-sm-6">Average victory points</dt><dd class="col-sm-6">@Model.AverageVictoryPoints</dd><dt class="col-sm-6">Average finishing position</dt><dd class="col-sm-6">@Model.AverageFinishingPosition</dd></dl></div>

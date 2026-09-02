@@ -402,6 +402,41 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
                     : new HashSet<int>()));
     }
 
+    public async Task<CompletedGameReadModel> GetCompletedGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        var game = await dbContext.Games.AsNoTracking().Include(g => g.Players)
+            .SingleOrDefaultAsync(g => g.Id == gameId, cancellationToken) ?? throw new KeyNotFoundException("The game was not found.");
+        if (!game.Players.Any(p => p.UserId == userId)) throw new UnauthorizedAccessException("Only participants may view this game.");
+        if (game.Status != GameStatus.Completed) throw new InvalidOperationException("The game is not completed.");
+        var ids = game.Players.Select(p => p.UserId).ToList();
+        var names = await dbContext.Users.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.UserName ?? u.Email ?? u.Id, cancellationToken);
+        return new CompletedGameReadModel(game.Id, game.Name, names.GetValueOrDefault(game.WinnerUserId!, "Unknown"),
+            game.Players.OrderBy(p => p.FinalRank).Select(p => new FinalPlayerResult(names.GetValueOrDefault(p.UserId, "Unknown"), p.FinalVictoryPoints ?? 0, p.FinalRank ?? 0, p.IsWinner, p.RoadsBuilt, p.SettlementsBuilt, p.CitiesBuilt, p.DevelopmentCardsBought, p.DevelopmentCardsPlayed, p.TotalResourcesGained)).ToList(),
+            names.GetValueOrDefault(game.LongestRoadHolderUserId!, "Unclaimed"), names.GetValueOrDefault(game.LargestArmyHolderUserId!, "Unclaimed"));
+    }
+
+    public async Task<CompletedGameReadModel> GetCompletedGamePublicAsync(Guid gameId, CancellationToken cancellationToken = default)
+    {
+        var game = await dbContext.Games.AsNoTracking().Include(g => g.Players).SingleOrDefaultAsync(g => g.Id == gameId, cancellationToken)
+            ?? throw new KeyNotFoundException("The game was not found.");
+        if (game.Status != GameStatus.Completed) throw new InvalidOperationException("The game is not completed.");
+        var ids = game.Players.Select(p => p.UserId).ToList();
+        var names = await dbContext.Users.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.UserName ?? u.Email ?? u.Id, cancellationToken);
+        return new CompletedGameReadModel(game.Id, game.Name, names.GetValueOrDefault(game.WinnerUserId!, "Unknown"), game.Players.OrderBy(p => p.FinalRank).Select(p => new FinalPlayerResult(names.GetValueOrDefault(p.UserId, "Unknown"), p.FinalVictoryPoints ?? 0, p.FinalRank ?? 0, p.IsWinner, p.RoadsBuilt, p.SettlementsBuilt, p.CitiesBuilt, p.DevelopmentCardsBought, p.DevelopmentCardsPlayed, p.TotalResourcesGained)).ToList(), names.GetValueOrDefault(game.LongestRoadHolderUserId!, "Unclaimed"), names.GetValueOrDefault(game.LargestArmyHolderUserId!, "Unclaimed"));
+    }
+
+    public async Task<UserStatistics> GetStatisticsAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        EnsureAuthenticated(userId);
+        var results = await dbContext.GamePlayers.AsNoTracking().Where(p => p.UserId == userId && p.Game.Status == GameStatus.Completed).ToListAsync(cancellationToken);
+        var played = results.Count;
+        var wins = results.Count(p => p.IsWinner);
+        return new UserStatistics(played, wins, played == 0 ? 0 : Math.Round(100m * wins / played, 2), results.Sum(p => p.FinalVictoryPoints ?? 0), played == 0 ? 0 : Math.Round(results.Average(p => (decimal)(p.FinalVictoryPoints ?? 0)), 2), played == 0 ? 0 : Math.Round(results.Average(p => (decimal)(p.FinalRank ?? 0)), 2));
+    }
+
+    public Task<bool> IsCompletedAsync(Guid gameId, CancellationToken cancellationToken = default) => dbContext.Games.AsNoTracking().AnyAsync(g => g.Id == gameId && g.Status == GameStatus.Completed, cancellationToken);
+
     public async Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default)
     {
         EnsureAuthenticated(userId);
@@ -655,6 +690,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         ReturnToBank(game, (ResourceType.Brick, 1), (ResourceType.Lumber, 1));
         game.BoardStateJson = SerializeBoard(board);
         RecalculateAwards(game, board);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("Road", edgeId, userId);
@@ -688,6 +724,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
         RecalculateAwards(game, board);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("Settlement", vertexId, userId);
@@ -718,6 +755,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         player.VisibleVictoryPoints += 1;
         game.BoardStateJson = SerializeBoard(board);
         RecalculateAwards(game, board);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new BuildResult("City", vertexId, userId);
@@ -750,8 +788,11 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             PurchasedTurnNumber = game.TurnNumber, PurchasedAt = DateTime.UtcNow
         };
         dbContext.DevelopmentCards.Add(card);
+        player.DevelopmentCardsBought++;
         game.DevelopmentDeckJson = SerializeDeck(deck);
         game.ResourceBankJson = SerializeBank(bank);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new DevelopmentCardPurchaseResult(card.Id, type, userId);
@@ -764,8 +805,9 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var card = await LoadPlayableCardAsync(game, userId, cardId, DevelopmentCardType.Knight, cancellationToken);
         game.Players.Single(player => player.UserId == userId).KnightsPlayed++;
         CompleteCardPlay(game, card);
-        game.Phase = GamePhase.AwaitingRobberPlacement;
         RecalculateAwards(game, DeserializeBoard(game.BoardStateJson!));
+        await CompleteGameIfNeededAsync(game, cancellationToken);
+        game.Phase = GamePhase.AwaitingRobberPlacement;
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(card.Id, card.Type, userId);
@@ -779,6 +821,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var board = DeserializeBoard(game.BoardStateJson!);
         var roadsAvailable = 15 - board.Edges.Count(edge => edge.Road?.UserId == userId);
         CompleteCardPlay(game, card);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         game.FreeRoadsRemaining = Math.Min(2, roadsAvailable);
         game.Phase = game.FreeRoadsRemaining > 0 && GetValidRoadBuildEdges(board, userId).Count > 0
             ? GamePhase.AwaitingRoadBuilding : GamePhase.TurnActions;
@@ -799,6 +842,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         var player = game.Players.Single(candidate => candidate.UserId == userId);
         foreach (var resource in new[] { first, second }) { bank.Remove(resource, 1); player.AddResource(resource, 1); }
         CompleteCardPlay(game, card);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         game.ResourceBankJson = SerializeBank(bank);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -819,6 +863,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
             opponent.RemoveResource(resource, amount); owner.AddResource(resource, amount);
         }
         CompleteCardPlay(game, card);
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(card.Id, card.Type, userId);
@@ -1195,6 +1240,35 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
     {
         card.PlayedAt = DateTime.UtcNow;
         game.DevelopmentCardPlayedThisTurn = true;
+        game.Players.Single(player => player.UserId == card.OwnerUserId).DevelopmentCardsPlayed++;
+    }
+
+    private async Task CompleteGameIfNeededAsync(Game game, CancellationToken cancellationToken)
+    {
+        if (game.Status != GameStatus.InProgress) return;
+        var board = DeserializeBoard(game.BoardStateJson!);
+        var cards = await dbContext.DevelopmentCards.AsNoTracking().Where(c => c.GameId == game.Id && c.PlayedAt == null).ToListAsync(cancellationToken);
+        var scores = game.Players.ToDictionary(p => p.UserId, p => p.VisibleVictoryPoints
+            + cards.Count(c => c.OwnerUserId == p.UserId && c.Type == DevelopmentCardType.VictoryPoint)
+            + (game.LongestRoadHolderUserId == p.UserId ? 2 : 0) + (game.LargestArmyHolderUserId == p.UserId ? 2 : 0));
+        var winner = scores.OrderByDescending(x => x.Value).ThenBy(x => game.Players.Single(p => p.UserId == x.Key).TurnOrder).First();
+        if (winner.Value < 10) return;
+        game.Status = GameStatus.Completed;
+        game.Phase = GamePhase.Completed;
+        game.FinishedAt = DateTime.UtcNow;
+        game.WinnerUserId = winner.Key;
+        var ordered = scores.OrderByDescending(x => x.Value).ThenBy(x => game.Players.Single(p => p.UserId == x.Key).TurnOrder).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var player = game.Players.Single(p => p.UserId == ordered[i].Key);
+            player.FinalVictoryPoints = ordered[i].Value;
+            player.FinalRank = i + 1;
+            player.IsWinner = player.UserId == winner.Key;
+            player.RoadsBuilt = board.Edges.Count(e => e.Road?.UserId == player.UserId);
+            player.SettlementsBuilt = board.Vertices.Count(v => v.Settlement?.UserId == player.UserId && v.Settlement.BuildingType == BuildingType.Settlement);
+            player.CitiesBuilt = board.Vertices.Count(v => v.Settlement?.UserId == player.UserId && v.Settlement.BuildingType == BuildingType.City);
+            player.TotalResourcesGained = player.TotalResourcesGained;
+        }
     }
 
     private static List<DevelopmentCardType> CreateDevelopmentDeck(int playerCount)

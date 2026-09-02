@@ -25,6 +25,7 @@ public sealed class GameHub(IGameService gameService) : Hub
     public const string DevelopmentCardBoughtEvent = "DevelopmentCardBought";
     public const string DevelopmentCardPlayedEvent = "DevelopmentCardPlayed";
     public const string AwardsChangedEvent = "AwardsChanged";
+    public const string GameCompletedEvent = "GameCompleted";
 
     public async Task JoinLobby(Guid gameId)
     {

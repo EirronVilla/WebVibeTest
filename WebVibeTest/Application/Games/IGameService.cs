@@ -8,6 +8,10 @@ public interface IGameService
     Task<WaitingLobby> GetWaitingLobbyAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task StartGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
     Task<ActiveGameReadModel> GetActiveGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
+    Task<CompletedGameReadModel> GetCompletedGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);
+    Task<CompletedGameReadModel> GetCompletedGamePublicAsync(Guid gameId, CancellationToken cancellationToken = default);
+    Task<UserStatistics> GetStatisticsAsync(string userId, CancellationToken cancellationToken = default);
+    Task<bool> IsCompletedAsync(Guid gameId, CancellationToken cancellationToken = default);
     Task PlaceInitialSettlementAsync(string userId, Guid gameId, int vertexId, CancellationToken cancellationToken = default);
     Task PlaceInitialRoadAsync(string userId, Guid gameId, int edgeId, CancellationToken cancellationToken = default);
     Task<DiceRollResult> RollDiceAsync(string userId, Guid gameId, CancellationToken cancellationToken = default);

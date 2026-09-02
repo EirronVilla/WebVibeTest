@@ -17,6 +17,15 @@ public sealed class GamePlayer
     public int RequiredDiscardCount { get; set; }
     public int VisibleVictoryPoints { get; set; }
     public int KnightsPlayed { get; set; }
+    public int? FinalVictoryPoints { get; set; }
+    public int? FinalRank { get; set; }
+    public bool IsWinner { get; set; }
+    public int RoadsBuilt { get; set; }
+    public int SettlementsBuilt { get; set; }
+    public int CitiesBuilt { get; set; }
+    public int DevelopmentCardsBought { get; set; }
+    public int DevelopmentCardsPlayed { get; set; }
+    public int TotalResourcesGained { get; set; }
     public Game Game { get; set; } = null!;
 
     public int TotalResources => Brick + Lumber + Wool + Grain + Ore;

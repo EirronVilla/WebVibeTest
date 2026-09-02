@@ -27,5 +27,6 @@ public sealed class Game
     public string? LongestRoadHolderUserId { get; set; }
     public int LongestRoadLength { get; set; }
     public string? LargestArmyHolderUserId { get; set; }
+    public string? WinnerUserId { get; set; }
     public ICollection<GamePlayer> Players { get; set; } = new List<GamePlayer>();
 }

@@ -37,6 +37,12 @@ public sealed class GamesController(
     [HttpGet]
     public IActionResult Create() => View(new CreateGameViewModel());
 
+    [HttpGet]
+    public async Task<IActionResult> Statistics(CancellationToken cancellationToken) => View(await gameService.GetStatisticsAsync(CurrentUserId, cancellationToken));
+
+    [AllowAnonymous, HttpGet]
+    public async Task<IActionResult> Completed(Guid id, CancellationToken cancellationToken) => View(await gameService.GetCompletedGamePublicAsync(id, cancellationToken));
+
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Create(CreateGameViewModel model, CancellationToken cancellationToken)
@@ -188,6 +194,8 @@ public sealed class GamesController(
         }
         catch (InvalidOperationException exception)
         {
+            try { return View("Completed", await gameService.GetCompletedGameAsync(CurrentUserId, id, cancellationToken)); }
+            catch (InvalidOperationException) { }
             TempData["Error"] = exception.Message;
             return RedirectToAction(nameof(Index));
         }
@@ -544,8 +552,15 @@ public sealed class GamesController(
             .SendAsync(GameHub.LobbyUpdatedEvent, gameId, cancellationToken);
 
     private Task NotifyGameStateChangedAsync(Guid gameId, CancellationToken cancellationToken) =>
-        hubContext.Clients.Group(GameHub.GroupName(gameId))
-            .SendAsync(GameHub.GameStateUpdatedEvent, gameId, cancellationToken);
+        NotifyGameStateAndCompletionAsync(gameId, cancellationToken);
+
+    private async Task NotifyGameStateAndCompletionAsync(Guid gameId, CancellationToken cancellationToken)
+    {
+        var clients = hubContext.Clients.Group(GameHub.GroupName(gameId));
+        await clients.SendAsync(GameHub.GameStateUpdatedEvent, gameId, cancellationToken);
+        if (await gameService.IsCompletedAsync(gameId, cancellationToken))
+            await clients.SendAsync(GameHub.GameCompletedEvent, gameId, cancellationToken);
+    }
 
     private async Task BroadcastBuildAsync(Guid gameId, BuildResult result, CancellationToken cancellationToken)
     {

@@ -1,0 +1,14 @@
+@model WebVibeTest.Application.Games.CompletedGameReadModel
+@{ ViewData["Title"] = $"{Model.Name} - Results"; }
+<div class="renaissance-panel p-4">
+    <h1>@Model.Name &middot; Game complete</h1>
+    <p class="lead">Winner: <strong>@Model.WinnerName</strong></p>
+    <p>Longest Road: <strong>@Model.LongestRoadHolderName</strong> &middot; Largest Army: <strong>@Model.LargestArmyHolderName</strong></p>
+    <table class="table table-striped align-middle"><thead><tr><th>Rank</th><th>Player</th><th>Victory points</th><th>Winner</th><th>Roads</th><th>Settlements</th><th>Cities</th><th>Dev cards</th></tr></thead><tbody>
+    @foreach (var player in Model.Players)
+    {
+        <tr><td>@player.FinalRank</td><td>@player.DisplayName</td><td><strong>@player.FinalVictoryPoints</strong></td><td>@(player.IsWinner ? "★" : "")</td><td>@player.RoadsBuilt</td><td>@player.SettlementsBuilt</td><td>@player.CitiesBuilt</td><td>@player.DevelopmentCardsBought bought / @player.DevelopmentCardsPlayed played</td></tr>
+    }
+    </tbody></table>
+    <a class="btn btn-primary" asp-action="Index">Back to games</a>
+</div>
