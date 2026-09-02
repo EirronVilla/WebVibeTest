@@ -659,7 +659,7 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         if (players.Count >= 5 && !game.IsSecondaryActionPhase)
         {
             var primaryIndex = players.FindIndex(player => player.UserId == userId);
-            var secondary = players[(primaryIndex + 3) % players.Count];
+            var secondary = players[PairedTurnRules.SecondaryPlayerIndex(primaryIndex, players.Count)];
             game.SecondaryPlayerUserId = secondary.UserId;
             game.CurrentPlayerUserId = secondary.UserId;
             game.IsSecondaryActionPhase = true;
@@ -827,8 +827,8 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
         game.Players.Single(player => player.UserId == userId).KnightsPlayed++;
         CompleteCardPlay(game, card);
         RecalculateAwards(game, DeserializeBoard(game.BoardStateJson!));
-        await CompleteGameIfNeededAsync(game, cancellationToken);
         game.Phase = GamePhase.AwaitingRobberPlacement;
+        await CompleteGameIfNeededAsync(game, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(card.Id, card.Type, userId);
@@ -914,11 +914,13 @@ public sealed class GameService(ApplicationDbContext dbContext) : IGameService
 
     public async Task FinishRoadBuildingAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)
     {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var game = await LoadActiveGameAsync(gameId, cancellationToken);
         EnsureActiveGame(game, userId);
         EnsureCurrentPlayerAndPhase(game, userId, GamePhase.AwaitingRoadBuilding, "Road Building is not being resolved.");
         game.FreeRoadsRemaining = 0; game.Phase = GamePhase.TurnActions;
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public Task<bool> CanAccessGameAsync(string userId, Guid gameId, CancellationToken cancellationToken = default)

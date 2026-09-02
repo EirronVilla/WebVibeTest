@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="WebVibeTest/WebVibeTest.csproj" />
+  <Project Path="WebVibeTest.Tests/WebVibeTest.Tests.csproj" />
 </Solution>
